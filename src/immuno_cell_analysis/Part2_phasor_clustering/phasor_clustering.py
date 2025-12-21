@@ -1,30 +1,31 @@
 """
-Part 2 — Phasor clustering (GMM) using per-instance means from Part 1 CSVs.
+Part 2 — Phasor clustering (GMM) on per-instance mean phasor coordinates.
 
-Inputs (produced by Part 1, inside each mask_* folder):
-  - mask_instances_features_minEqDiam8px_tau0-12.csv
+Reads all per-mosaic CSVs produced by Part 1:
+  mask_instances_features_minEqDiam8px_tau0-12.csv
 
-This script:
-  - Finds all those CSVs recursively under PATIENT_DIR
-  - Runs GMM clustering in phasor space using columns:
-        g_mean, s_mean
-  - Auto-labels clusters:
-        3 clusters: by phasor angle of cluster COM:
-            smallest angle -> melanin
-            middle angle   -> cell
-            largest angle  -> elastin
-        2 clusters: melanin absent; use tau proxy:
-            lower tau -> cell
-            higher tau -> elastin
-  - Saves, per CSV:
-        * clustered CSV with phasor_class_name
-        * ONLY_cells CSV
-        * phasor segmented JPG plot (PhasorPlot)
-  - Saves a global summary CSV.
+Default behavior:
+- For visit_01..visit_03: GMM with 3 clusters -> auto-label by phasor angle:
+    smallest angle -> melanin
+    middle angle   -> cell
+    largest angle  -> elastin
+
+Special case:
+- For visit_04: GMM with 2 clusters (melanin absent) -> auto-label using tau_phase_mean_ns:
+    lower tau -> cell
+    higher tau -> elastin
+
+Outputs:
+- Per input CSV:
+    * <stem>_phasor_classified.csv   (all objects + 'phasor_class_name')
+    * <stem>_ONLY_cells.csv         (only rows classified as cell)
+    * <stem>_phasor_segmented.jpg   (phasor segmented plot)
+- Global:
+    * summary_counts.csv
 
 Notes:
-  - This works directly on the final Part 1 CSVs (tau-filtered).
-  - No raw image needed here.
+- Assumes CSV columns:
+    g_mean, s_mean, tau_phase_mean_ns (for visit_04 labeling), and label (instance id)
 """
 
 from __future__ import annotations
@@ -37,209 +38,165 @@ from phasorpy.plot import PhasorPlot
 
 
 # ============================================================
-# CONFIG — EDIT THESE
+# CONFIG
 # ============================================================
 PATIENT_DIR = Path("/Users/schutyb/Documents/balu_lab/data_patient_449")
 
-# Where to write Part 2 outputs
-OUT_ROOT = PATIENT_DIR / "part2_phasor_clustering_out"
-OUT_ROOT.mkdir(parents=True, exist_ok=True)
-
-# Input CSV filename (from Part 1)
+# find these CSVs recursively under PATIENT_DIR
 CSV_NAME = "mask_instances_features_minEqDiam8px_tau0-12.csv"
 
-# Columns in your Part 1 CSV (confirmed from your code)
+# where to put outputs (centralized)
+OUT_ROOT = PATIENT_DIR / "phasor_cluster_out"
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+# phasor columns (from Part 1)
 COL_G = "g_mean"
 COL_S = "s_mean"
 
-# (Optional) if you want to use tau_phase_mean_ns for diagnostics or 2-cluster labeling,
-# we compute tau proxy from phasor (G,S) by default (same as your old code).
-FREQUENCY_MHZ = 80.0
+# tau column used ONLY for visit_04 2-cluster labeling
+COL_TAU = "tau_phase_mean_ns"
 
-# GMM settings
+# GMM
 N_CLASSES_DEFAULT = 3
-N_CLASSES_SPECIAL = 2
+N_CLASSES_VISIT4 = 2
 RANDOM_STATE = 0
 COV_TYPE = "full"
 
-# If you have specific mosaics (or visits) that must use 2 clusters:
-# Put either mosaic folder names or any substring you want to match in the CSV path.
-# Example: {"visit_04/Mosaic07_4x4_FOV600_z150_32Sp"} or {"Mosaic07_"}
-TWO_CLUSTER_MATCH = {
-    # "visit_04/Mosaic07_4x4_FOV600_z150_32Sp",
-}
-
-# Plotting
-CLASS_COLORS = {
-    "melanin": "#1f77b4",
-    "cell": "#ff7f0e",
-    "elastin": "#2ca02c",
-}
+# plotting
+FREQUENCY_MHZ = 80.0
 MARKER_SIZE = 6
 ALPHA = 0.45
 EXPORT_DPI = 300
 JPG_QUALITY = 95
-JPG_SUBSAMPLING = 0
+JPG_SUBSAMPLING = 0  # 0 = best quality
+
+# fixed colors per class
+CLASS_COLORS = {
+    "melanin": "#1f77b4",
+    "cell":    "#ff7f0e",
+    "elastin": "#2ca02c",
+}
 
 
 # ============================================================
-# HELPERS
+# Helpers
 # ============================================================
 def safe_numeric(series: pd.Series) -> np.ndarray:
     return pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
 
 
-def tau_proxy_from_phasor(G: np.ndarray, S: np.ndarray, freq_mhz: float) -> np.ndarray:
-    """
-    Lifetime proxy from phasor coordinates (single-exponential monotonic proxy).
-    tau ≈ (S/G)/omega
-    """
-    omega = 2.0 * np.pi * (freq_mhz * 1e6)
-    eps = 1e-12
-    return (S / (G + eps)) / omega
+def discover_csvs(root: Path) -> list[Path]:
+    return sorted(root.rglob(CSV_NAME))
 
 
-def choose_n_classes(csv_path: Path) -> int:
-    s = str(csv_path)
-    for key in TWO_CLUSTER_MATCH:
-        if key in s:
-            return N_CLASSES_SPECIAL
+def parse_visit_and_mosaic(csv_path: Path) -> tuple[str, str]:
+    """
+    Expects paths like:
+      .../visit_XX/MosaicYY.../mask_.../mask_instances_features_minEqDiam8px_tau0-12.csv
+    Returns: (visit_name, mosaic_name)
+    """
+    parts = list(csv_path.parts)
+    visit = next((p for p in parts if p.startswith("visit_")), "visit_unknown")
+    mosaic = next((p for p in parts if p.startswith("Mosaic")), "Mosaic_unknown")
+    return visit, mosaic
+
+
+def choose_n_classes(visit_name: str) -> int:
+    # Force visit_04 -> 2 clusters
+    if visit_name == "visit_04":
+        return N_CLASSES_VISIT4
     return N_CLASSES_DEFAULT
 
 
-def relabel_clusters(
-    G: np.ndarray,
-    S: np.ndarray,
-    labels_raw: np.ndarray,
-    n_classes: int,
-    freq_mhz: float,
-):
+def relabel_clusters_3_by_angle(G: np.ndarray, S: np.ndarray, labels_raw: np.ndarray):
     """
-    Returns:
-      label_map: dict raw_label -> {"melanin","cell","elastin"} (or only cell/elastin for 2 clusters)
-      centers_sorted: list tuples for printing
-      sort_mode: "angle" or "tau_proxy"
+    Sort clusters by angle atan2(S,G):
+      smallest angle -> melanin
+      middle angle   -> cell
+      largest angle  -> elastin
     """
-    unique_labels = np.unique(labels_raw)
-
-    if n_classes == 2:
-        centers = []
-        for lab in unique_labels:
-            sel = labels_raw == lab
-            Gc = float(np.mean(G[sel]))
-            Sc = float(np.mean(S[sel]))
-            tau_c = float(tau_proxy_from_phasor(np.array([Gc]), np.array([Sc]), freq_mhz=freq_mhz)[0])
-            centers.append((int(lab), tau_c, Gc, Sc))
-
-        centers_sorted = sorted(centers, key=lambda t: t[1])  # low tau -> cell, high tau -> elastin
-        ordered_names = ["cell", "elastin"]
-        label_map = {lab: name for (lab, _, _, _), name in zip(centers_sorted, ordered_names)}
-        return label_map, centers_sorted, "tau_proxy"
-
-    # Default: 3 clusters by phasor angle
+    unique = np.unique(labels_raw)
     centers = []
-    for lab in unique_labels:
+    for lab in unique:
         sel = labels_raw == lab
         Gc = float(np.mean(G[sel]))
         Sc = float(np.mean(S[sel]))
-        angle = float(np.arctan2(Sc, Gc))
-        centers.append((int(lab), angle, Gc, Sc))
-
-    centers_sorted = sorted(centers, key=lambda t: t[1])  # small -> melanin, mid -> cell, large -> elastin
+        ang = float(np.arctan2(Sc, Gc))
+        centers.append((int(lab), ang, Gc, Sc))
+    centers_sorted = sorted(centers, key=lambda t: t[1])
     ordered_names = ["melanin", "cell", "elastin"]
     label_map = {lab: name for (lab, _, _, _), name in zip(centers_sorted, ordered_names)}
     return label_map, centers_sorted, "angle"
 
 
-def save_phasorplot_high_quality(plot_obj, out_path: Path,
-                                 dpi: int = 300,
-                                 quality: int = 95,
-                                 subsampling: int = 0):
+def relabel_clusters_2_by_tau(labels_raw: np.ndarray, tau: np.ndarray):
     """
-    Save PhasorPlot with good raster quality (JPG).
+    For 2 clusters (visit_04):
+      lower mean tau -> cell
+      higher mean tau -> elastin
     """
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    unique = np.unique(labels_raw)
+    centers = []
+    for lab in unique:
+        sel = labels_raw == lab
+        tau_c = float(np.nanmean(tau[sel]))
+        centers.append((int(lab), tau_c))
+    centers_sorted = sorted(centers, key=lambda t: t[1])
+    ordered_names = ["cell", "elastin"]
+    label_map = {lab: name for (lab, _), name in zip(centers_sorted, ordered_names)}
+    return label_map, centers_sorted, "tau_phase_mean"
 
-    # Try PhasorPy save (supports dpi/quality)
+
+def save_phasorplot_high_quality(plot_obj: PhasorPlot, out_path: Path):
+    """
+    Save PhasorPlot with high-quality JPG output.
+    """
     try:
-        plot_obj.save(str(out_path), dpi=dpi, quality=quality)
+        plot_obj.save(str(out_path), dpi=EXPORT_DPI, quality=JPG_QUALITY)
         return
     except Exception:
         pass
 
-    # Fallback: matplotlib fig if available
     fig = getattr(plot_obj, "fig", None) or getattr(plot_obj, "figure", None)
     if fig is not None:
         fig.savefig(
             out_path,
-            dpi=dpi,
+            dpi=EXPORT_DPI,
             bbox_inches="tight",
-            pil_kwargs={"quality": int(quality), "subsampling": int(subsampling)},
+            pil_kwargs={"quality": int(JPG_QUALITY), "subsampling": int(JPG_SUBSAMPLING)},
         )
         return
 
-    # Last fallback
     plot_obj.save(str(out_path))
 
 
-def infer_visit_mosaic_from_path(csv_path: Path):
-    """
-    Try to infer visit + mosaic names from a path like:
-      .../visit_01/MosaicXX.../mask_.../mask_instances_features_...csv
-    """
-    parts = csv_path.parts
-    visit = None
-    mosaic = None
-    for p in parts:
-        if p.startswith("visit_"):
-            visit = p
-        if p.startswith("Mosaic"):
-            mosaic = p
-    return visit, mosaic
-
-
-def relative_output_dir(csv_path: Path) -> Path:
-    """
-    Mirror input structure under OUT_ROOT, using visit/mosaic if found.
-    Otherwise, uses parent folder name.
-    """
-    visit, mosaic = infer_visit_mosaic_from_path(csv_path)
-    if visit and mosaic:
-        return OUT_ROOT / visit / mosaic
-    # fallback: just use the directory name containing the csv
-    return OUT_ROOT / csv_path.parent.name
-
-
 # ============================================================
-# MAIN
+# Main
 # ============================================================
 def main():
-    csv_paths = sorted(PATIENT_DIR.rglob(CSV_NAME))
-    if not csv_paths:
+    csv_files = discover_csvs(PATIENT_DIR)
+    if not csv_files:
         raise FileNotFoundError(f"No '{CSV_NAME}' found under: {PATIENT_DIR}")
 
-    print(f"[INFO] Patient root: {PATIENT_DIR}")
-    print(f"[INFO] Found {len(csv_paths)} CSV(s) matching {CSV_NAME}")
-    print(f"[INFO] Output root: {OUT_ROOT}")
-
+    print(f"[INFO] Found {len(csv_files)} CSV(s) under {PATIENT_DIR}")
     summary_rows = []
 
-    for csv_path in csv_paths:
-        out_dir = relative_output_dir(csv_path)
+    for csv_path in csv_files:
+        visit_name, mosaic_name = parse_visit_and_mosaic(csv_path)
+        n_classes = choose_n_classes(visit_name)
+
+        # output folder per mosaic (keeps things organized)
+        out_dir = OUT_ROOT / visit_name / mosaic_name
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        visit, mosaic = infer_visit_mosaic_from_path(csv_path)
-        tag = f"{visit}/{mosaic}" if (visit and mosaic) else csv_path.parent.name
-
-        n_classes = choose_n_classes(csv_path)
-
-        print(f"\n=== {tag} | clusters={n_classes} ===")
-        print(f"CSV: {csv_path}")
+        print(f"\n=== {visit_name} | {mosaic_name} | {csv_path.name} | GMM={n_classes} ===")
 
         df = pd.read_csv(csv_path)
 
-        if COL_G not in df.columns or COL_S not in df.columns:
-            print(f"  [WARN] Missing columns {COL_G} or {COL_S}. Skipping.")
+        # check columns
+        missing = [c for c in (COL_G, COL_S) if c not in df.columns]
+        if missing:
+            print(f"  [WARN] Missing columns {missing}. Skipping.")
             continue
 
         G = safe_numeric(df[COL_G])
@@ -253,106 +210,101 @@ def main():
             print(f"  [WARN] Too few valid phasor points (N={X.shape[0]}). Skipping.")
             continue
 
-        # --- GMM ---
+        # --- GMM segmentation ---
         gmm = GaussianMixture(
-            n_components=n_classes,
+            n_components=int(n_classes),
             covariance_type=COV_TYPE,
             random_state=RANDOM_STATE,
         )
         labels_raw = gmm.fit_predict(X)
 
         # --- Auto-label ---
-        label_map, centers_sorted, sort_mode = relabel_clusters(
-            Gv, Sv, labels_raw, n_classes=n_classes, freq_mhz=FREQUENCY_MHZ
-        )
+        if n_classes == 2:
+            if COL_TAU not in df.columns:
+                print(f"  [WARN] visit_04 requires '{COL_TAU}' for 2-cluster labeling. Skipping.")
+                continue
+            tau = safe_numeric(df[COL_TAU])[valid]
+            label_map, centers_sorted, sort_mode = relabel_clusters_2_by_tau(labels_raw, tau)
+            print("  Centers sorted by tau_phase_mean:")
+            for lab, tau_c in centers_sorted:
+                print(f"    raw {lab} | tau_phase_mean={tau_c:.4f} ns -> {label_map[lab]}")
+        else:
+            label_map, centers_sorted, sort_mode = relabel_clusters_3_by_angle(Gv, Sv, labels_raw)
+            print("  Centers sorted by angle:")
+            for lab, ang, gc, sc in centers_sorted:
+                print(f"    raw {lab} | angle={ang:.4f} | (G,S)=({gc:.4f},{sc:.4f}) -> {label_map[lab]}")
+
         labels_name = np.array([label_map[int(l)] for l in labels_raw], dtype=object)
 
         counts = {
-            "melanin": int(np.sum(labels_name == "melanin")),
+            "melanin": int(np.sum(labels_name == "melanin")) if n_classes == 3 else 0,
             "cell": int(np.sum(labels_name == "cell")),
             "elastin": int(np.sum(labels_name == "elastin")),
         }
+        print("  Counts:", counts)
 
-        print(f"Cluster centers sorted by {sort_mode}:")
-        if sort_mode == "tau_proxy":
-            for lab, tau_c, gc, sc in centers_sorted:
-                print(f"  raw {lab} | tau_proxy={tau_c:.3e} s | (G,S)=({gc:.4f},{sc:.4f}) -> {label_map[lab]}")
-        else:
-            for lab, ang, gc, sc in centers_sorted:
-                print(f"  raw {lab} | angle={ang:.4f} | (G,S)=({gc:.4f},{sc:.4f}) -> {label_map[lab]}")
-        print("Counts:", counts)
-
-        # --- Write labels back into full df ---
+        # --- Write labels back (aligned to df rows) ---
         df["phasor_class_name"] = None
         df.loc[valid, "phasor_class_name"] = labels_name
 
-        # --- Save outputs ---
-        stem = f"{visit}_{mosaic}" if (visit and mosaic) else csv_path.parent.name
+        # --- Save classified CSV (all objects) ---
+        out_all = out_dir / f"{csv_path.stem}_phasor_classified.csv"
+        df.to_csv(out_all, index=False)
 
-        out_clustered = out_dir / f"{stem}_clustered.csv"
-        out_cells = out_dir / f"{stem}_ONLY_cells.csv"
-        out_plot = out_dir / f"{stem}_phasor_segmented.jpg"
-
-        df.to_csv(out_clustered, index=False)
-
+        # --- Save cells-only CSV ---
         df_cells = df[df["phasor_class_name"] == "cell"].copy()
+        out_cells = out_dir / f"{csv_path.stem}_ONLY_cells.csv"
         df_cells.to_csv(out_cells, index=False)
 
-        # --- Plot ---
-        plot = PhasorPlot(frequency=FREQUENCY_MHZ, title=stem)
+        # --- Plot segmented phasor (only valid points) ---
+        phasor_jpg = out_dir / f"{csv_path.stem}_phasor_segmented.jpg"
+        title = f"{visit_name} | {mosaic_name} | GMM={n_classes} ({sort_mode})"
+        plot = PhasorPlot(frequency=FREQUENCY_MHZ, title=title)
 
-        for cls in ["melanin", "cell", "elastin"]:
+        classes_to_plot = ["cell", "elastin"] if n_classes == 2 else ["melanin", "cell", "elastin"]
+        for cls in classes_to_plot:
             sel = labels_name == cls
             if np.sum(sel) == 0:
                 continue
             plot.plot(
-                Gv[sel],
-                Sv[sel],
+                Gv[sel], Sv[sel],
                 marker=".",
                 markersize=MARKER_SIZE,
                 alpha=ALPHA,
                 label=cls,
                 color=CLASS_COLORS[cls],
             )
+
         plot.legend()
+        save_phasorplot_high_quality(plot, phasor_jpg)
 
-        save_phasorplot_high_quality(
-            plot,
-            out_plot,
-            dpi=EXPORT_DPI,
-            quality=JPG_QUALITY,
-            subsampling=JPG_SUBSAMPLING,
-        )
-
-        print(f"  [SAVED] clustered: {out_clustered}")
-        print(f"  [SAVED] cells-only: {out_cells} (N={len(df_cells)})")
-        print(f"  [SAVED] plot: {out_plot}")
-
+        # --- Summary row ---
         summary_rows.append({
-            "visit": visit,
-            "mosaic": mosaic,
-            "tag": tag,
-            "input_csv": str(csv_path),
+            "visit": visit_name,
+            "mosaic": mosaic_name,
+            "csv_path": str(csv_path),
             "n_total_rows": int(len(df)),
             "n_valid_phasor": int(X.shape[0]),
             "n_classes_used": int(n_classes),
             "n_melanin": counts["melanin"],
             "n_cell": counts["cell"],
             "n_elastin": counts["elastin"],
-            "clustered_csv": str(out_clustered),
+            "classified_csv": str(out_all),
             "cells_only_csv": str(out_cells),
-            "phasor_plot_jpg": str(out_plot),
-            "raw_label_to_name": str(label_map),
+            "phasor_plot_jpg": str(phasor_jpg),
+            "raw_label_map": str(label_map),
             "sort_mode": sort_mode,
         })
 
-    # --- Global summary ---
+        print(f"  [SAVED] {out_dir}")
+
+    # --- Save summary ---
     summary_df = pd.DataFrame(summary_rows)
     summary_csv = OUT_ROOT / "summary_counts.csv"
     summary_df.to_csv(summary_csv, index=False)
 
     print(f"\n✅ Done. Summary saved: {summary_csv}")
-    print(f"📁 Outputs in: {OUT_ROOT}")
+    print(f"📁 Outputs root: {OUT_ROOT}")
 
 
 if __name__ == "__main__":
