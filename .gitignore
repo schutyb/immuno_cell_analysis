@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+
+# Environments
+.venv/
+.mel-venv/
+.env/
+
+# OS
+.DS_Store
+
+# Data / outputs (no subir)
+data/
+**/data_patient_*/
+**/*.tif
+**/*.tiff
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/phasor_out/
+**/phasor_qc/
+**/calculate_phasor/
+**/output/
