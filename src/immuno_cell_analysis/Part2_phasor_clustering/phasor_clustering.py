@@ -5,13 +5,13 @@ Reads all per-mosaic CSVs produced by Part 1:
   mask_instances_features_minEqDiam8px_tau0-12.csv
 
 Default behavior:
-- For visit_01..visit_02: GMM with 3 clusters -> auto-label by phasor angle:
+- For visit_01..visit_03: GMM with 3 clusters -> auto-label by phasor angle:
     smallest angle -> melanin
     middle angle   -> cell
     largest angle  -> elastin
 
 Special case:
-- For visit_03 and visit_04: GMM with 2 clusters (melanin absent) -> auto-label using tau_phase_mean_ns:
+- For visit_04: GMM with 2 clusters (melanin absent) -> auto-label using tau_phase_mean_ns:
     lower tau -> cell
     higher tau -> elastin
 
@@ -25,7 +25,7 @@ Outputs:
 
 Notes:
 - Assumes CSV columns:
-    g_mean, s_mean, tau_phase_mean_ns (for visit_03/04 labeling), and label (instance id)
+    g_mean, s_mean, tau_phase_mean_ns (only used for visit_04 labeling), and label (instance id)
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ OUT_ROOT.mkdir(parents=True, exist_ok=True)
 COL_G = "g_mean"
 COL_S = "s_mean"
 
-# tau column used for 2-cluster labeling (visit_03 + visit_04)
+# tau column used ONLY for visit_04 2-cluster labeling
 COL_TAU = "tau_phase_mean_ns"
 
 # GMM
@@ -62,8 +62,8 @@ N_CLASSES_SPECIAL = 2
 RANDOM_STATE = 0
 COV_TYPE = "full"
 
-# visits with no melanin -> 2 clusters
-TWO_CLUSTER_VISITS = {"visit_03", "visit_04"}
+# ✅ ONLY visit_04 has no melanin -> 2 clusters
+TWO_CLUSTER_VISITS = {"visit_04"}
 
 # plotting
 FREQUENCY_MHZ = 80.0
@@ -105,7 +105,6 @@ def parse_visit_and_mosaic(csv_path: Path) -> tuple[str, str]:
 
 
 def choose_n_classes(visit_name: str) -> int:
-    # Force specific visits -> 2 clusters
     if visit_name in TWO_CLUSTER_VISITS:
         return N_CLASSES_SPECIAL
     return N_CLASSES_DEFAULT
@@ -126,6 +125,7 @@ def relabel_clusters_3_by_angle(G: np.ndarray, S: np.ndarray, labels_raw: np.nda
         Sc = float(np.mean(S[sel]))
         ang = float(np.arctan2(Sc, Gc))
         centers.append((int(lab), ang, Gc, Sc))
+
     centers_sorted = sorted(centers, key=lambda t: t[1])
     ordered_names = ["melanin", "cell", "elastin"]
     label_map = {lab: name for (lab, _, _, _), name in zip(centers_sorted, ordered_names)}
@@ -144,6 +144,7 @@ def relabel_clusters_2_by_tau(labels_raw: np.ndarray, tau: np.ndarray):
         sel = labels_raw == lab
         tau_c = float(np.nanmean(tau[sel]))
         centers.append((int(lab), tau_c))
+
     centers_sorted = sorted(centers, key=lambda t: t[1])
     ordered_names = ["cell", "elastin"]
     label_map = {lab: name for (lab, _), name in zip(centers_sorted, ordered_names)}
