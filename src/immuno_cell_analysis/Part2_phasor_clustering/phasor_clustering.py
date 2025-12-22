@@ -5,13 +5,13 @@ Reads all per-mosaic CSVs produced by Part 1:
   mask_instances_features_minEqDiam8px_tau0-12.csv
 
 Default behavior:
-- For visit_01..visit_03: GMM with 3 clusters -> auto-label by phasor angle:
+- For visit_01..visit_02: GMM with 3 clusters -> auto-label by phasor angle:
     smallest angle -> melanin
     middle angle   -> cell
     largest angle  -> elastin
 
 Special case:
-- For visit_04: GMM with 2 clusters (melanin absent) -> auto-label using tau_phase_mean_ns:
+- For visit_03 and visit_04: GMM with 2 clusters (melanin absent) -> auto-label using tau_phase_mean_ns:
     lower tau -> cell
     higher tau -> elastin
 
@@ -25,7 +25,7 @@ Outputs:
 
 Notes:
 - Assumes CSV columns:
-    g_mean, s_mean, tau_phase_mean_ns (for visit_04 labeling), and label (instance id)
+    g_mean, s_mean, tau_phase_mean_ns (for visit_03/04 labeling), and label (instance id)
 """
 
 from __future__ import annotations
@@ -53,14 +53,17 @@ OUT_ROOT.mkdir(parents=True, exist_ok=True)
 COL_G = "g_mean"
 COL_S = "s_mean"
 
-# tau column used ONLY for visit_04 2-cluster labeling
+# tau column used for 2-cluster labeling (visit_03 + visit_04)
 COL_TAU = "tau_phase_mean_ns"
 
 # GMM
 N_CLASSES_DEFAULT = 3
-N_CLASSES_VISIT4 = 2
+N_CLASSES_SPECIAL = 2
 RANDOM_STATE = 0
 COV_TYPE = "full"
+
+# visits with no melanin -> 2 clusters
+TWO_CLUSTER_VISITS = {"visit_03", "visit_04"}
 
 # plotting
 FREQUENCY_MHZ = 80.0
@@ -102,9 +105,9 @@ def parse_visit_and_mosaic(csv_path: Path) -> tuple[str, str]:
 
 
 def choose_n_classes(visit_name: str) -> int:
-    # Force visit_04 -> 2 clusters
-    if visit_name == "visit_04":
-        return N_CLASSES_VISIT4
+    # Force specific visits -> 2 clusters
+    if visit_name in TWO_CLUSTER_VISITS:
+        return N_CLASSES_SPECIAL
     return N_CLASSES_DEFAULT
 
 
@@ -131,7 +134,7 @@ def relabel_clusters_3_by_angle(G: np.ndarray, S: np.ndarray, labels_raw: np.nda
 
 def relabel_clusters_2_by_tau(labels_raw: np.ndarray, tau: np.ndarray):
     """
-    For 2 clusters (visit_04):
+    For 2 clusters:
       lower mean tau -> cell
       higher mean tau -> elastin
     """
@@ -148,9 +151,7 @@ def relabel_clusters_2_by_tau(labels_raw: np.ndarray, tau: np.ndarray):
 
 
 def save_phasorplot_high_quality(plot_obj: PhasorPlot, out_path: Path):
-    """
-    Save PhasorPlot with high-quality JPG output.
-    """
+    """Save PhasorPlot with high-quality JPG output."""
     try:
         plot_obj.save(str(out_path), dpi=EXPORT_DPI, quality=JPG_QUALITY)
         return
@@ -185,7 +186,6 @@ def main():
         visit_name, mosaic_name = parse_visit_and_mosaic(csv_path)
         n_classes = choose_n_classes(visit_name)
 
-        # output folder per mosaic (keeps things organized)
         out_dir = OUT_ROOT / visit_name / mosaic_name
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -193,7 +193,6 @@ def main():
 
         df = pd.read_csv(csv_path)
 
-        # check columns
         missing = [c for c in (COL_G, COL_S) if c not in df.columns]
         if missing:
             print(f"  [WARN] Missing columns {missing}. Skipping.")
@@ -210,7 +209,6 @@ def main():
             print(f"  [WARN] Too few valid phasor points (N={X.shape[0]}). Skipping.")
             continue
 
-        # --- GMM segmentation ---
         gmm = GaussianMixture(
             n_components=int(n_classes),
             covariance_type=COV_TYPE,
@@ -221,7 +219,7 @@ def main():
         # --- Auto-label ---
         if n_classes == 2:
             if COL_TAU not in df.columns:
-                print(f"  [WARN] visit_04 requires '{COL_TAU}' for 2-cluster labeling. Skipping.")
+                print(f"  [WARN] {visit_name} requires '{COL_TAU}' for 2-cluster labeling. Skipping.")
                 continue
             tau = safe_numeric(df[COL_TAU])[valid]
             label_map, centers_sorted, sort_mode = relabel_clusters_2_by_tau(labels_raw, tau)
@@ -243,27 +241,25 @@ def main():
         }
         print("  Counts:", counts)
 
-        # --- Write labels back (aligned to df rows) ---
+        # write labels back
         df["phasor_class_name"] = None
         df.loc[valid, "phasor_class_name"] = labels_name
 
-        # --- Save classified CSV (all objects) ---
         out_all = out_dir / f"{csv_path.stem}_phasor_classified.csv"
         df.to_csv(out_all, index=False)
 
-        # --- Save cells-only CSV ---
         df_cells = df[df["phasor_class_name"] == "cell"].copy()
         out_cells = out_dir / f"{csv_path.stem}_ONLY_cells.csv"
         df_cells.to_csv(out_cells, index=False)
 
-        # --- Plot segmented phasor (only valid points) ---
+        # plot segmented phasor
         phasor_jpg = out_dir / f"{csv_path.stem}_phasor_segmented.jpg"
         title = f"{visit_name} | {mosaic_name} | GMM={n_classes} ({sort_mode})"
         plot = PhasorPlot(frequency=FREQUENCY_MHZ, title=title)
 
         classes_to_plot = ["cell", "elastin"] if n_classes == 2 else ["melanin", "cell", "elastin"]
-        for cls in classes_to_plot:
-            sel = labels_name == cls
+        for clsname in classes_to_plot:
+            sel = labels_name == clsname
             if np.sum(sel) == 0:
                 continue
             plot.plot(
@@ -271,14 +267,13 @@ def main():
                 marker=".",
                 markersize=MARKER_SIZE,
                 alpha=ALPHA,
-                label=cls,
-                color=CLASS_COLORS[cls],
+                label=clsname,
+                color=CLASS_COLORS[clsname],
             )
 
         plot.legend()
         save_phasorplot_high_quality(plot, phasor_jpg)
 
-        # --- Summary row ---
         summary_rows.append({
             "visit": visit_name,
             "mosaic": mosaic_name,
@@ -298,7 +293,6 @@ def main():
 
         print(f"  [SAVED] {out_dir}")
 
-    # --- Save summary ---
     summary_df = pd.DataFrame(summary_rows)
     summary_csv = OUT_ROOT / "summary_counts.csv"
     summary_df.to_csv(summary_csv, index=False)
