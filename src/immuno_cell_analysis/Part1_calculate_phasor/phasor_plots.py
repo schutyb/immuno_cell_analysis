@@ -72,16 +72,9 @@ Then:
 
 How to run
 ----------
-1) Edit PHASOR_ROOT and OUT_ROOT at the bottom
+1) Edit PHASOR_ROOT and OUT_ROOT in main()
 2) Run:
       python phasor_plots.py
-
-Common gotchas
---------------
-- This script does NOT change phasor calibration. It only filters for QC/visualization.
-- `cmin` is in histogram-count units (not g/s units). It does NOT delete phasor points.
-- Ensure matplotlib uses a white figure background when saving:
-    plt.savefig(..., facecolor="white")
 """
 
 from __future__ import annotations
@@ -121,13 +114,7 @@ PHASOR_YLIM = (-0.05, 0.70)
 # IO helpers
 # ============================================================
 def load_cyx_tiff(path: Path) -> np.ndarray:
-    """
-    Load a CYX TIFF as float32.
-
-    Returns
-    -------
-    cyx : np.ndarray of shape (C,Y,X)
-    """
+    """Load a CYX TIFF as float32 (C,Y,X)."""
     arr = tiff.imread(str(path))
     arr = np.asarray(arr)
     if arr.ndim != 3:
@@ -136,9 +123,7 @@ def load_cyx_tiff(path: Path) -> np.ndarray:
 
 
 def save_tiff_cyx(path: Path, cyx: np.ndarray):
-    """
-    Save a float32 CYX TIFF with axes metadata.
-    """
+    """Save a float32 CYX TIFF with axes metadata."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tiff.imwrite(
         str(path),
@@ -154,9 +139,7 @@ def save_tiff_cyx(path: Path, cyx: np.ndarray):
 def save_mean_image_jpg(out_path: Path, mean_img: np.ndarray):
     """
     Save grayscale mean intensity image using robust display range to avoid saturation.
-
-    Display range:
-        vmin/vmax = p1 and p99.8 percentiles (finite pixels only)
+    Display range: vmin/vmax = p1 and p99.8 percentiles (finite pixels only)
     """
     v = mean_img[np.isfinite(mean_img)]
     if v.size == 0:
@@ -185,9 +168,7 @@ def save_mean_image_jpg(out_path: Path, mean_img: np.ndarray):
 
 
 def save_mean_histogram_gray_jpg(out_path: Path, mean_img: np.ndarray):
-    """
-    Save histogram of mean intensity (finite pixels only).
-    """
+    """Save histogram of mean intensity (finite pixels only)."""
     v = mean_img[np.isfinite(mean_img)].ravel()
     plt.figure(figsize=(7, 5))
     plt.hist(v, bins=256, color="gray")
@@ -207,13 +188,9 @@ def save_phasor_h1_phasorplot_relative_jpg(
 ):
     """
     Save H1 phasor histogram using PhasorPlot.hist2d with a clean white background.
-
     We compute cmin from the histogram's max bin count:
         cmin = ceil(MIN_FRAC_OF_MAX * max_count), at least 1
-
-    Then we set:
-        cmap.set_under("white")
-    and use vmin=cmin so bins < cmin are rendered as "under" (white).
+    Then bins below vmin=cmin become "under" -> rendered white.
     """
     m = np.isfinite(g_h1) & np.isfinite(s_h1)
     g = g_h1[m].ravel()
@@ -260,17 +237,7 @@ def save_phasor_h1_phasorplot_relative_jpg(
 def filter_calibrated_cyx(cyx: np.ndarray) -> np.ndarray:
     """
     Apply phasor median filtering to a calibrated CYX TIFF.
-
-    Filtering is applied to:
-      - mean (Y,X)
-      - real/imag for harmonics 1 and 2 stacked into (H,Y,X)
-
-    Then modulation/phase are recomputed from filtered real/imag.
-
-    Returns
-    -------
-    cyx_filtered : np.ndarray (C,Y,X) float32
-        Same channel layout as input, but filtered.
+    Filtering is applied to mean + real/imag for H1/H2, then phase/mod recomputed.
     """
     mean = cyx[0]  # (Y,X)
 
@@ -301,19 +268,16 @@ def filter_calibrated_cyx(cyx: np.ndarray) -> np.ndarray:
 
 
 def find_calibrated_tiffs(root: Path) -> list[Path]:
-    """
-    Recursively find all calibrated phasor mosaics.
-    """
+    """Recursively find all calibrated phasor mosaics."""
     return sorted(root.rglob("phasor_calibrated_CYX.tif"))
 
 
 # ============================================================
-# Main
+# Main worker
 # ============================================================
 def run_qc(phasor_root: Path, out_root: Path):
     """
     Run QC for all calibrated phasor TIFFs under `phasor_root`.
-
     Creates a mirrored folder structure under `out_root`.
     """
     cal_paths = find_calibrated_tiffs(phasor_root)
@@ -323,7 +287,6 @@ def run_qc(phasor_root: Path, out_root: Path):
     print(f"[INFO] Found {len(cal_paths)} calibrated TIFF(s).")
 
     for cal_path in cal_paths:
-        # Preserve same relative structure
         rel = cal_path.relative_to(phasor_root)
         out_dir = out_root / rel.parent
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -349,7 +312,10 @@ def run_qc(phasor_root: Path, out_root: Path):
         print("  [SAVED]", out_dir)
 
 
-if __name__ == "__main__":
+# ============================================================
+# Entry point (for preflight + run_all)
+# ============================================================
+def main():
     # Input: output folder from calculate_phasor.py
     PHASOR_ROOT = Path("/Users/schutyb/Documents/balu_lab/data_patient_449/phasor_out")
 
@@ -357,3 +323,7 @@ if __name__ == "__main__":
     OUT_ROOT = Path("/Users/schutyb/Documents/balu_lab/data_patient_449/phasor_qc")
 
     run_qc(PHASOR_ROOT, OUT_ROOT)
+
+
+if __name__ == "__main__":
+    main()

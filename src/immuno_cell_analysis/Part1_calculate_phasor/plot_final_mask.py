@@ -63,12 +63,11 @@ from skimage.color import label2rgb
 # Provide a DIRECT TIFF path inside the target mask_* folder
 # ============================================================
 TIFF_PATH = Path(
-    "/Users/schutyb/Documents/balu_lab/data_patient_449/"
-    "visit_01/Mosaic03_4x4_FOV600_z110_32Sp/"
-    "mask_Mosaic03_4x4_FOV600_z110_32Sp/"
-    "mask_instances_minEqDiam8px_tau0-12.tif"
+    "/Users/schutyb/Documents/balu_lab/data_patient_449/" \
+    "visit_04/Mosaic07_4x4_FOV600_z150_32Sp/" \
+    "mask_Mosaic07_4x4_FOV600_z150_32Sp/" \
+    "mask_instances_features_minEqDiam8px_tau0-12.csv" 
 )
-
 OUT_PNG_NAME = "QC_instances_diam_vs_tau.png"
 
 
