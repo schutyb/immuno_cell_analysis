@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "immuno-cell-analysis"
+version = "0.1.0"
+description = "Immuno cell analysis pipeline (phasor/FLIM, masks, clustering, elastin correction)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Si querés, podés ajustar deps después. Esto es un baseline razonable.
+dependencies = [
+  "numpy",
+  "pandas",
+  "tifffile",
+  "matplotlib",
+  "scikit-learn",
+  "phasorpy",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["immuno_cell_analysis*"]
+
+[tool.setuptools.package-data]
+immuno_cell_analysis = ["**/*.json", "**/*.yaml", "**/*.yml", "**/*.md", "**/*.txt"]
