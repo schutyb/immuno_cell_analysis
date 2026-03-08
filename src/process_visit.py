@@ -428,7 +428,7 @@ def process_mosaic_flim(mosaic_dir: Path, ref_mean: np.ndarray, ref_real: np.nda
 # ----------------------------
 def main() -> None:
     DEFAULT_VISIT_DIR = Path(
-        "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit04"
+        "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit03"
     ).expanduser()
 
     ap = argparse.ArgumentParser()
