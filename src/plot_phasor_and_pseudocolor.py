@@ -10,6 +10,13 @@ import tifffile as tiff
 from matplotlib.colors import LinearSegmentedColormap
 from phasorpy.plot import PhasorPlot
 
+from color_scales import (
+    get_phase_colormap,
+    map_phase_deg_to_norm,
+    phase_intensity_to_rgb,
+    phase_rad_to_deg,
+)
+
 
 FREQUENCY_MHZ = 80.0
 DPI = 400
@@ -17,6 +24,17 @@ DPI = 400
 # Separate binning factors
 PHASOR_BINNING = 8
 PSEUDOCOLOR_BINNING = 4
+
+# Manual phase range in DEGREES
+PHASE_MIN_DEG = 0.0
+PHASE_MAX_DEG = 55.0
+
+# Optional gamma on phase mapping
+PHASE_GAMMA = 0.6
+
+# Color scale from color_scales.py
+PHASE_SCALE = "reds_to_greens"
+PHASE_CMAP_LEVELS = 2048
 
 
 # ----------------------------
@@ -38,10 +56,6 @@ def save_rgb_png(path: Path, img: np.ndarray) -> None:
 # Utils
 # ----------------------------
 def normalize_percentile(x: np.ndarray, pmin: float = 2.0, pmax: float = 98.0) -> np.ndarray:
-    """
-    Normalize using percentiles, ignoring NaNs/Infs.
-    Invalid pixels are set to 0 in the output.
-    """
     arr = np.asarray(x, dtype=np.float32)
     good = np.isfinite(arr)
 
@@ -74,9 +88,6 @@ def block_mean_2d(arr: np.ndarray, factor: int) -> np.ndarray:
 
 
 def upsample_nearest(arr: np.ndarray, factor: int, out_shape: tuple[int, int]) -> np.ndarray:
-    """
-    Upsample 2D or 3D image by nearest-neighbor repetition, then crop.
-    """
     if factor <= 1:
         return arr
 
@@ -89,23 +100,6 @@ def upsample_nearest(arr: np.ndarray, factor: int, out_shape: tuple[int, int]) -
         return up[:out_shape[0], :out_shape[1], :]
 
     raise ValueError(f"Unsupported ndim={arr.ndim}")
-
-
-def make_phase_colormap() -> LinearSegmentedColormap:
-    colors = [
-        (0.00, "#6A00FF"),  # violeta
-        (0.10, "#3A00FF"),  # violeta-azul
-        (0.20, "#304FFE"),  # azul
-        (0.32, "#0080FF"),  # azul claro
-        (0.45, "#00B050"),  # verde
-        (0.55, "#8FD400"),  # verde-amarillo
-        (0.65, "#FFF200"),  # amarillo
-        (0.75, "#FFC000"),  # amarillo-naranja
-        (0.85, "#FF9E00"),  # naranja
-        (0.92, "#FF5500"),  # naranja-rojo
-        (1.00, "#E60000"),  # rojo
-    ]
-    return LinearSegmentedColormap.from_list("phase_map", colors, N=256)
 
 
 def make_black_alpha_cmap():
@@ -122,55 +116,19 @@ def make_black_alpha_cmap():
     )
 
 
-def phase_intensity_to_rgb(g: np.ndarray, s: np.ndarray, avg: np.ndarray) -> np.ndarray:
-    """
-    hue = phase
-    brightness = intensity
-
-    NaN-safe:
-    - phase is computed only on valid pixels
-    - invalid pixels become black
-
-    IMPORTANT:
-    This keeps EXACTLY the same pseudocolor mapping you had before.
-    """
-    g = np.asarray(g, dtype=np.float32)
-    s = np.asarray(s, dtype=np.float32)
-    avg = np.asarray(avg, dtype=np.float32)
-
-    valid = np.isfinite(g) & np.isfinite(s) & np.isfinite(avg) & (avg > 0)
-
-    phase = np.full_like(g, np.nan, dtype=np.float32)
-    phase[valid] = np.arctan2(s[valid], g[valid])
-
-    # Keep pseudocolor exactly as before
-    phase_norm = normalize_percentile(phase, pmin=1.0, pmax=99.0)
-    phase_norm = np.power(phase_norm, 0.3)
-
-    intensity_norm = normalize_percentile(avg, pmin=1.0, pmax=99.0)
-    intensity_norm = intensity_norm ** 0.99
-
-    cmap = make_phase_colormap()
-    rgb = cmap(phase_norm)[..., :3]
-    rgb *= intensity_norm[..., None]
-
-    rgb[~valid] = 0.0
-    return np.clip(rgb, 0.0, 1.0)
-
-
 def add_phasor_rainbow_background(
     ax,
-    real_data: np.ndarray,
-    imag_data: np.ndarray,
     alpha: float = 0.50,
     nx: int = 700,
     ny: int = 450,
 ) -> None:
     """
-    Add a phase-colored rainbow background under the universal semicircle,
-    leaving the rest white, with a slightly warmer appearance than before.
+    Phasor background using the selected scale from color_scales.py.
 
-    This affects ONLY the phasor background, not the pseudocolor image.
+    Only colors the region where:
+        PHASE_MIN_DEG <= phase <= PHASE_MAX_DEG
+
+    Everything else stays white.
     """
     g = np.linspace(0.0, 1.0, nx)
     s = np.linspace(0.0, 0.65, ny)
@@ -180,43 +138,46 @@ def add_phasor_rainbow_background(
     inside_semicircle = ((gg - 0.5) ** 2 + ss ** 2 <= 0.25) & (ss >= 0)
 
     # Phase in phasor space
-    phase_bg = np.arctan2(ss, gg)
+    phase_bg_rad = np.arctan2(ss, gg)
+    phase_bg_deg = phase_rad_to_deg(phase_bg_rad)
 
-    # Radius from origin
-    radius = np.sqrt(gg**2 + ss**2)
+    # Keep only desired phase range
+    inside_phase_range = (
+        np.isfinite(phase_bg_deg)
+        & (phase_bg_deg >= PHASE_MIN_DEG)
+        & (phase_bg_deg <= PHASE_MAX_DEG)
+    )
 
-    # Actual phase max from plotted data
-    valid_data = np.isfinite(real_data) & np.isfinite(imag_data)
-    if np.any(valid_data):
-        phase_data = np.arctan2(imag_data[valid_data], real_data[valid_data])
-        phase_max = float(np.nanmax(phase_data))
-        if phase_max <= 0:
-            phase_max = 1.0
-    else:
-        phase_max = 1.0
+    valid_bg = inside_semicircle & inside_phase_range
 
-    phase_min = 0.0
-    phase_norm = (phase_bg - phase_min) / (phase_max - phase_min)
-    phase_norm = np.clip(phase_norm, 0.0, 1.0)
-
-    # Slightly less aggressive cool-color expansion than before:
-    # warmer background without touching the pseudocolor image.
-    phase_norm = np.power(phase_norm, 0.55)
-
-    cmap = make_phase_colormap()
-    rgb_inside = cmap(phase_norm)[..., :3]
-
-    # More arc-like appearance:
-    # whiter near the origin, stronger color near the semicircle
-    semicircle_radius = 0.5
-    whiten = np.clip(radius / semicircle_radius, 0.0, 1.0)
-    whiten = np.power(whiten, 1.8)
-
-    rgb_mixed = (1.0 - whiten[..., None]) * np.ones_like(rgb_inside) + whiten[..., None] * rgb_inside
-
-    # White outside the semicircle
+    # Start with white everywhere
     rgb = np.ones((ny, nx, 3), dtype=np.float32)
-    rgb[inside_semicircle] = rgb_mixed[inside_semicircle]
+
+    if np.any(valid_bg):
+        phase_norm = np.zeros_like(phase_bg_deg, dtype=np.float32)
+        phase_norm[valid_bg] = map_phase_deg_to_norm(
+            phase_bg_deg[valid_bg],
+            phase_min_deg=PHASE_MIN_DEG,
+            phase_max_deg=PHASE_MAX_DEG,
+            phase_gamma=PHASE_GAMMA,
+        )
+
+        cmap = get_phase_colormap(PHASE_SCALE, n=PHASE_CMAP_LEVELS)
+        rgb_inside = cmap(phase_norm)[..., :3]
+
+        # Arc-like effect: whiter near origin, stronger near semicircle
+        radius = np.sqrt(gg**2 + ss**2)
+        semicircle_radius = 0.5
+        whiten = np.clip(radius / semicircle_radius, 0.0, 1.0)
+        whiten = np.power(whiten, 1.8)
+
+        rgb_mixed = np.ones_like(rgb_inside)
+        rgb_mixed[valid_bg] = (
+            (1.0 - whiten[valid_bg, None]) * np.ones((np.sum(valid_bg), 3), dtype=np.float32)
+            + whiten[valid_bg, None] * rgb_inside[valid_bg]
+        )
+
+        rgb[valid_bg] = rgb_mixed[valid_bg]
 
     ax.imshow(
         rgb,
@@ -232,7 +193,6 @@ def add_phasor_rainbow_background(
 # Plotting
 # ----------------------------
 def save_phasor_plot_png(out_path: Path, g: np.ndarray, s: np.ndarray, avg: np.ndarray) -> None:
-    # 8x8 binning before plotting
     g_bin = block_mean_2d(g, PHASOR_BINNING)
     s_bin = block_mean_2d(s, PHASOR_BINNING)
     avg_bin = block_mean_2d(avg, PHASOR_BINNING)
@@ -257,13 +217,8 @@ def save_phasor_plot_png(out_path: Path, g: np.ndarray, s: np.ndarray, avg: np.n
     plot = PhasorPlot(frequency=FREQUENCY_MHZ, title="First harmonic phasor plot")
     ax = plot.ax
 
-    # Rainbow background first
-    add_phasor_rainbow_background(ax, real, imag, alpha=0.50)
-
-    # Histogram on top with transparent-to-black cmap
+    add_phasor_rainbow_background(ax, alpha=0.50)
     plot.hist2d(real, imag, cmap=make_black_alpha_cmap(), bins=128)
-
-    # Redraw semicircle on top
     plot.semicircle()
 
     fig = plt.gcf()
@@ -272,16 +227,20 @@ def save_phasor_plot_png(out_path: Path, g: np.ndarray, s: np.ndarray, avg: np.n
 
 
 def save_pseudocolor_pngs(base_path_no_ext: Path, g: np.ndarray, s: np.ndarray, avg: np.ndarray) -> None:
-    """
-    Saves:
-      - binned pseudocolor
-      - upsampled pseudocolor back to original size
-    """
     g_bin = block_mean_2d(g, PSEUDOCOLOR_BINNING)
     s_bin = block_mean_2d(s, PSEUDOCOLOR_BINNING)
     avg_bin = block_mean_2d(avg, PSEUDOCOLOR_BINNING)
 
-    rgb_binned = phase_intensity_to_rgb(g_bin, s_bin, avg_bin)
+    rgb_binned = phase_intensity_to_rgb(
+        g_bin,
+        s_bin,
+        avg_bin,
+        scale=PHASE_SCALE,
+        phase_min_deg=PHASE_MIN_DEG,
+        phase_max_deg=PHASE_MAX_DEG,
+        phase_gamma=PHASE_GAMMA,
+        n=PHASE_CMAP_LEVELS,
+    )
     save_rgb_png(base_path_no_ext.parent / f"{base_path_no_ext.name}_binned.png", rgb_binned)
 
     rgb_upsampled = upsample_nearest(rgb_binned, PSEUDOCOLOR_BINNING, g.shape)
@@ -342,7 +301,10 @@ def main() -> None:
     if not new_dirs:
         raise RuntimeError(f"No se encontraron carpetas _new dentro de {patient_dir}")
 
+    print(f"[INFO] Phase range (deg): {PHASE_MIN_DEG} -> {PHASE_MAX_DEG}")
+    print(f"[INFO] Phase scale: {PHASE_SCALE}")
     print(f"[INFO] _new folders found: {len(new_dirs)}")
+
     for new_dir in new_dirs:
         process_new_dir(new_dir)
 
