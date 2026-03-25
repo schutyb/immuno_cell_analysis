@@ -25,7 +25,8 @@ from phasorpy.plot import plot_phasor
 # ============================================================
 
 PATIENT_DIR = Path("/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449")
-OUTPUT_DIR = PATIENT_DIR / "analysis" / "roi_phasor_three_cases_four_visits"
+
+OUTPUT_DIR = PATIENT_DIR / "analysis" / "roi_gmm_raw_phasor"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 PHASOR_G_IDX = 1
@@ -44,14 +45,6 @@ FILTER_PHASOR_RANGE = False
 G_MIN, G_MAX = -0.2, 1.2
 S_MIN, S_MAX = -0.2, 1.2
 
-PHASOR_TYPES = [
-    ("uncalibrated", "phasor_uncalibrated.tif", "Raw phasor"),
-    ("uncalibrated_elastin_corr", "phasor_uncalibrated_elastin_corr.tif", "Raw + elastin correction"),
-    ("coumarin_calibrated", "phasor.tif", "Coumarin calibrated"),
-]
-
-VISIT_ORDER = ["visit01", "visit02", "visit03", "visit04"]
-
 
 # ============================================================
 # DATA STRUCTURES
@@ -62,9 +55,7 @@ class Case:
     patient: str
     visit: str
     mosaic_name: str
-    raw_path: Path
-    elastin_corr_path: Path
-    coumarin_path: Path
+    phasor_path: Path
     mask_path: Path
 
 
@@ -87,16 +78,6 @@ def n_components_for_visit(visit: str) -> int:
     return 2 if visit.lower() == "visit04" else 3
 
 
-def short_visit_label(visit: str) -> str:
-    visit = str(visit).lower()
-    if visit.startswith("visit"):
-        try:
-            return f"v{int(visit.replace('visit', ''))}"
-        except ValueError:
-            return visit
-    return visit
-
-
 # ============================================================
 # SEARCH
 # ============================================================
@@ -114,22 +95,16 @@ def find_mask_in_new_folder(mosaic_dir: Path) -> Optional[Path]:
 
 
 def collect_cases(patient_dir: Path) -> List[Case]:
+    """
+    Look for mosaics that have:
+      - phasor_uncalibrated.tif
+      - _new/instance_mask_filtered.*
+    """
     cases: List[Case] = []
 
-    for raw_path in patient_dir.rglob("phasor_uncalibrated.tif"):
-        mosaic_dir = raw_path.parent
-
-        elastin_corr_path = mosaic_dir / "phasor_uncalibrated_elastin_corr.tif"
-        coumarin_path = mosaic_dir / "_new" / "phasor.tif"
+    for phasor_path in patient_dir.rglob("phasor_uncalibrated.tif"):
+        mosaic_dir = phasor_path.parent
         mask_path = find_mask_in_new_folder(mosaic_dir)
-
-        if not elastin_corr_path.exists():
-            print(f"[SKIP] Missing elastin-corrected raw phasor: {elastin_corr_path}")
-            continue
-
-        if not coumarin_path.exists():
-            print(f"[SKIP] Missing coumarin-calibrated phasor: {coumarin_path}")
-            continue
 
         if mask_path is None:
             print(f"[SKIP] Missing instance_mask_filtered in: {mosaic_dir / '_new'}")
@@ -139,11 +114,9 @@ def collect_cases(patient_dir: Path) -> List[Case]:
         cases.append(
             Case(
                 patient=patient,
-                visit=visit.lower(),
+                visit=visit,
                 mosaic_name=mosaic_dir.name,
-                raw_path=raw_path,
-                elastin_corr_path=elastin_corr_path,
-                coumarin_path=coumarin_path,
+                phasor_path=phasor_path,
                 mask_path=mask_path,
             )
         )
@@ -204,7 +177,6 @@ def roi_table_from_phasor(
     patient: str,
     visit: str,
     mosaic_name: str,
-    phasor_type: str,
 ) -> pd.DataFrame:
     g, s = read_phasor_gs(phasor_path)
     labels = read_mask(mask_path)
@@ -245,7 +217,6 @@ def roi_table_from_phasor(
             "patient": patient,
             "visit": visit,
             "mosaic_name": mosaic_name,
-            "phasor_type": phasor_type,
             "phasor_path": str(phasor_path),
             "mask_path": str(mask_path),
             "roi_label": int(prop.label),
@@ -325,7 +296,13 @@ def assign_biological_labels_by_phase(
 # PLOTTING
 # ============================================================
 
-def plot_visit_panel(ax, df_roi: pd.DataFrame, cluster_df: pd.DataFrame, title: str) -> None:
+def plot_roi_gmm(
+    df_roi: pd.DataFrame,
+    cluster_df: pd.DataFrame,
+    title: str,
+    outpath: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(7, 6))
     plotted_any = False
 
     for bio_label in ["elastin", "cells", "melanin"]:
@@ -365,7 +342,7 @@ def plot_visit_panel(ax, df_roi: pd.DataFrame, cluster_df: pd.DataFrame, title: 
         ax.scatter(
             row["g_mean"],
             row["s_mean"],
-            s=140,
+            s=150,
             c=COLORS[row["bio_label"]],
             edgecolors="black",
             linewidths=1.0,
@@ -375,36 +352,7 @@ def plot_visit_panel(ax, df_roi: pd.DataFrame, cluster_df: pd.DataFrame, title: 
 
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 0.7)
-    ax.legend(fontsize=8)
-
-
-def make_figure_for_case(
-    case_title: str,
-    phasor_type: str,
-    by_visit_data: dict,
-    outpath: Path,
-) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12), sharex=True, sharey=True)
-    axes = axes.ravel()
-
-    for ax, visit in zip(axes, VISIT_ORDER):
-        if visit in by_visit_data:
-            df_roi, cluster_df = by_visit_data[visit]
-            plot_visit_panel(ax, df_roi, cluster_df, f"{case_title} - {short_visit_label(visit)}")
-        else:
-            plot_phasor(
-                np.array([0.5]),
-                np.array([0.0]),
-                style="plot",
-                marker="",
-                linestyle="",
-                frequency=PHASOR_FREQUENCY,
-                ax=ax,
-                title=f"{case_title} - {short_visit_label(visit)}",
-                show=False,
-            )
-            ax.text(0.5, 0.35, "No data", ha="center", va="center", fontsize=12)
-
+    ax.legend()
     fig.tight_layout()
     fig.savefig(outpath, dpi=300, bbox_inches="tight")
 
@@ -422,120 +370,84 @@ def main() -> None:
     cases = collect_cases(PATIENT_DIR)
 
     if not cases:
-        raise RuntimeError("No valid mosaics found with the 3 phasor types and instance mask.")
+        raise RuntimeError("No valid mosaics found with raw phasor and instance mask.")
 
     print(f"[INFO] Found {len(cases)} mosaics")
     for c in cases:
         print(f"  - {c.visit} | {c.mosaic_name}")
 
-    all_roi_tables = []
+    all_raw = []
 
     for case in cases:
         try:
-            dfs = [
-                roi_table_from_phasor(
-                    case.raw_path,
-                    case.mask_path,
-                    patient=case.patient,
-                    visit=case.visit,
-                    mosaic_name=case.mosaic_name,
-                    phasor_type="uncalibrated",
-                ),
-                roi_table_from_phasor(
-                    case.elastin_corr_path,
-                    case.mask_path,
-                    patient=case.patient,
-                    visit=case.visit,
-                    mosaic_name=case.mosaic_name,
-                    phasor_type="uncalibrated_elastin_corr",
-                ),
-                roi_table_from_phasor(
-                    case.coumarin_path,
-                    case.mask_path,
-                    patient=case.patient,
-                    visit=case.visit,
-                    mosaic_name=case.mosaic_name,
-                    phasor_type="coumarin_calibrated",
-                ),
-            ]
+            df_raw = roi_table_from_phasor(
+                case.phasor_path,
+                case.mask_path,
+                patient=case.patient,
+                visit=case.visit,
+                mosaic_name=case.mosaic_name,
+            )
 
-            for df in dfs:
-                if len(df) > 0:
-                    all_roi_tables.append(df)
+            if len(df_raw) == 0:
+                print(f"[WARN] Empty ROI table in {case.visit} | {case.mosaic_name}")
+                continue
 
-            print(f"[OK] {case.visit} | {case.mosaic_name}")
+            all_raw.append(df_raw)
+
+            print(
+                f"[OK] {case.visit} | {case.mosaic_name} | raw ROIs={len(df_raw)}"
+            )
 
         except Exception as e:
             print(f"[ERROR] {case.visit} | {case.mosaic_name}: {e}")
 
-    if not all_roi_tables:
-        raise RuntimeError("No ROI tables could be generated.")
+    if not all_raw:
+        raise RuntimeError("No ROI tables could be generated from raw phasor.")
 
-    df_all = pd.concat(all_roi_tables, ignore_index=True)
-    df_all.to_csv(OUTPUT_DIR / "roi_phasor_points_all_three_types.csv", index=False)
+    df_all_raw = pd.concat(all_raw, ignore_index=True)
+    df_all_raw.to_csv(OUTPUT_DIR / "roi_all_raw_phasor.csv", index=False)
 
+    cluster_rows = []
     all_labeled = []
-    all_clusters = []
 
-    # Run GMM by visit and phasor type
-    by_case_visit = {ptype: {} for ptype, _, _ in PHASOR_TYPES}
+    for visit in sorted(df_all_raw["visit"].unique()):
+        df_visit = df_all_raw[df_all_raw["visit"] == visit].copy()
 
-    for visit in sorted(df_all["visit"].unique()):
+        if len(df_visit) < 2:
+            print(f"[WARN] Too few ROIs in {visit}, skipping GMM")
+            continue
+
         n_components = n_components_for_visit(visit)
 
-        for phasor_type, _, _ in PHASOR_TYPES:
-            df_subset = df_all[
-                (df_all["visit"] == visit) &
-                (df_all["phasor_type"] == phasor_type)
-            ].copy()
+        df_visit_lab, cluster_df = assign_biological_labels_by_phase(
+            df_visit, n_components
+        )
 
-            if len(df_subset) < 2:
-                print(f"[WARN] Too few ROIs for {visit} | {phasor_type}, skipping")
-                continue
+        cluster_df["visit"] = visit
 
-            try:
-                df_lab, cluster_df = assign_biological_labels_by_phase(
-                    df_subset,
-                    n_components=n_components,
-                )
+        all_labeled.append(df_visit_lab)
+        cluster_rows.append(cluster_df)
 
-                df_lab["visit"] = visit
-                df_lab["phasor_type"] = phasor_type
+        plot_roi_gmm(
+            df_visit_lab,
+            cluster_df,
+            title=f"ROI phasor GMM - Raw phasor - {visit}",
+            outpath=OUTPUT_DIR / f"{visit}_roi_phasor_gmm_raw_phasor.png",
+        )
 
-                cluster_df["visit"] = visit
-                cluster_df["phasor_type"] = phasor_type
-
-                all_labeled.append(df_lab)
-                all_clusters.append(cluster_df)
-
-                by_case_visit[phasor_type][visit] = (df_lab, cluster_df)
-
-                print(f"[OK] GMM {visit} | {phasor_type} | n_rois={len(df_subset)}")
-
-            except Exception as e:
-                print(f"[ERROR] GMM failed for {visit} | {phasor_type}: {e}")
+        print(f"[OK] Saved raw phasor GMM plot for {visit}")
 
     if all_labeled:
-        df_labeled = pd.concat(all_labeled, ignore_index=True)
-        df_labeled.to_csv(OUTPUT_DIR / "roi_phasor_points_with_gmm_labels_all_three_types.csv", index=False)
-
-    if all_clusters:
-        df_clusters = pd.concat(all_clusters, ignore_index=True)
-        df_clusters = df_clusters[
-            ["visit", "phasor_type", "cluster", "bio_label", "phase_mean", "g_mean", "s_mean", "g_std", "s_std", "n_rois"]
-        ]
-        df_clusters.to_csv(OUTPUT_DIR / "cluster_centers_all_three_types_by_visit.csv", index=False)
-
-    # Make 3 figures: one per phasor case, 4 panels = 4 visits
-    for phasor_type, _, title in PHASOR_TYPES:
-        outpath = OUTPUT_DIR / f"{phasor_type}_four_visits_roi_phasor_gmm.png"
-        make_figure_for_case(
-            case_title=title,
-            phasor_type=phasor_type,
-            by_visit_data=by_case_visit[phasor_type],
-            outpath=outpath,
+        pd.concat(all_labeled, ignore_index=True).to_csv(
+            OUTPUT_DIR / "roi_labeled_raw_phasor.csv",
+            index=False,
         )
-        print(f"[OK] Saved figure: {outpath}")
+
+    if cluster_rows:
+        pd.concat(cluster_rows, ignore_index=True).to_csv(
+            OUTPUT_DIR / "cluster_centers_raw_phasor.csv",
+            index=False,
+        )
 
     print("[DONE]")
     print(f"Saved everything in: {OUTPUT_DIR}")
