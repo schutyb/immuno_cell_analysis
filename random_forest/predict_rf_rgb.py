@@ -10,13 +10,13 @@ from skimage.filters import gaussian, sobel, laplace
 from skimage.morphology import remove_small_objects, remove_small_holes
 
 
-MODEL_PATH = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/models/rf_rgb_visit01.joblib"
+MODEL_PATH = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/models/rf_rgb_v2_all_visits.joblib"
 
 INPUT_FOLDER = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449"
 
-PROB_THRESHOLD = 0.50
-MIN_OBJECT_SIZE = 20
-MAX_HOLE_SIZE = 20
+PROB_THRESHOLD = 0.51
+MIN_OBJECT_SIZE = 50
+MAX_HOLE_SIZE = 50
 
 
 def load_rgb(path):
@@ -76,14 +76,14 @@ def extract_rgb_features(img):
     return features.reshape(-1, features.shape[-1]).astype(np.float32)
 
 
-def predict_tile(clf, img):
+def predict_tile(clf, img, prob_threshold, min_object_size, max_hole_size):
     X = extract_rgb_features(img)
     prob = clf.predict_proba(X)[:, 1]
     prob = prob.reshape(img.shape[:2]).astype(np.float32)
 
-    mask = prob > PROB_THRESHOLD
-    mask = remove_small_objects(mask, min_size=MIN_OBJECT_SIZE)
-    mask = remove_small_holes(mask, area_threshold=MAX_HOLE_SIZE)
+    mask = prob > prob_threshold
+    mask = remove_small_objects(mask, min_size=min_object_size)
+    mask = remove_small_holes(mask, area_threshold=max_hole_size)
 
     return prob, mask.astype(np.uint8)
 
@@ -119,20 +119,16 @@ def make_panel(rgb, mask, overlay, title):
 
     canvas = Image.new("RGB", (panel_w, panel_h), "white")
 
-    rgb_img = Image.fromarray(rgb)
-    mask_img = Image.fromarray(mask_to_rgb(mask))
-    overlay_img = Image.fromarray(overlay)
-
-    canvas.paste(rgb_img, (0, title_h))
-    canvas.paste(mask_img, (w + gap, title_h))
-    canvas.paste(overlay_img, (2 * w + 2 * gap, title_h))
+    canvas.paste(Image.fromarray(rgb), (0, title_h))
+    canvas.paste(Image.fromarray(mask_to_rgb(mask)), (w + gap, title_h))
+    canvas.paste(Image.fromarray(overlay), (2 * w + 2 * gap, title_h))
 
     draw = ImageDraw.Draw(canvas)
 
     try:
         font_title = ImageFont.truetype("Arial.ttf", 28)
         font_label = ImageFont.truetype("Arial.ttf", 24)
-    except:
+    except Exception:
         font_title = None
         font_label = None
 
@@ -147,39 +143,63 @@ def make_panel(rgb, mask, overlay, title):
 def find_mosaic_dirs(input_folder):
     input_folder = Path(input_folder)
 
-    if input_folder.name.lower().startswith("visit"):
-        return sorted([
-            p for p in input_folder.iterdir()
-            if p.is_dir() and p.name.lower().startswith("mosaic")
-        ])
-
     return sorted([
         p for p in input_folder.glob("visit*/Mosaic*")
         if p.is_dir()
     ])
 
 
-def process_mosaic(clf, mosaic_dir):
+def build_experiment_name(prob_threshold, min_object_size, max_hole_size):
+    return (
+        f"thr{int(prob_threshold * 100):03d}"
+        f"_min{min_object_size}"
+        f"_hole{max_hole_size}"
+    )
+
+
+def process_mosaic(clf, mosaic_dir, prob_threshold, min_object_size, max_hole_size):
     rgb_dir = mosaic_dir / "random_forest" / "rgb"
-    out_dir = mosaic_dir / "random_forest" / "prediction_rgb_rf_tiles"
+
+    exp_name = build_experiment_name(
+        prob_threshold=prob_threshold,
+        min_object_size=min_object_size,
+        max_hole_size=max_hole_size
+    )
+
+    out_dir = mosaic_dir / "random_forest" / f"prediction_rgb_rf_tiles_v2_{exp_name}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tile_paths = sorted(rgb_dir.glob("Im_*_pseudoRGB.tif"))
 
     if len(tile_paths) == 0:
-        print(f"Saltando {mosaic_dir.name}: no encontré tiles RGB")
+        print(f"Skipping {mosaic_dir}: no RGB tiles found")
         return
 
-    print(f"\nProcesando mosaico: {mosaic_dir}")
-    print(f"Tiles encontrados: {len(tile_paths)}")
+    visit_name = mosaic_dir.parent.name
+    mosaic_name = mosaic_dir.name
+
+    print(f"\nProcessing: {visit_name} | {mosaic_name}")
+    print(f"Tiles found: {len(tile_paths)}")
+    print(f"Output folder: {out_dir}")
 
     for tile_path in tile_paths:
         img = load_rgb(tile_path)
-        prob, mask = predict_tile(clf, img)
+
+        prob, mask = predict_tile(
+            clf=clf,
+            img=img,
+            prob_threshold=prob_threshold,
+            min_object_size=min_object_size,
+            max_hole_size=max_hole_size
+        )
+
         overlay = make_red_overlay(img, mask)
 
         tile_id = tile_path.stem.replace("_pseudoRGB", "")
-        title = f"{mosaic_dir.parent.name} | {mosaic_dir.name} | {tile_id}"
+        title = (
+            f"{visit_name} | {mosaic_name} | {tile_id} | "
+            f"thr={prob_threshold}, min={min_object_size}, hole={max_hole_size}"
+        )
 
         panel = make_panel(
             rgb=img,
@@ -188,10 +208,12 @@ def process_mosaic(clf, mosaic_dir):
             title=title
         )
 
-        out_path = out_dir / f"{tile_id}_rgb_mask_overlay_panel.png"
+        out_name = f"{visit_name}_{mosaic_name}_{tile_id}_rgb_mask_overlay_panel.png"
+        out_path = out_dir / out_name
+
         panel.save(out_path, dpi=(600, 600))
 
-        print(f"Guardado: {out_path}")
+        print(f"Saved: {out_path}")
 
 
 def main():
@@ -199,11 +221,20 @@ def main():
 
     mosaic_dirs = find_mosaic_dirs(INPUT_FOLDER)
 
-    print(f"Modelo cargado: {MODEL_PATH}")
-    print(f"Mosaicos encontrados: {len(mosaic_dirs)}")
+    print(f"Model loaded: {MODEL_PATH}")
+    print(f"Mosaics found: {len(mosaic_dirs)}")
+    print(f"PROB_THRESHOLD: {PROB_THRESHOLD}")
+    print(f"MIN_OBJECT_SIZE: {MIN_OBJECT_SIZE}")
+    print(f"MAX_HOLE_SIZE: {MAX_HOLE_SIZE}")
 
     for mosaic_dir in mosaic_dirs:
-        process_mosaic(clf, mosaic_dir)
+        process_mosaic(
+            clf=clf,
+            mosaic_dir=mosaic_dir,
+            prob_threshold=PROB_THRESHOLD,
+            min_object_size=MIN_OBJECT_SIZE,
+            max_hole_size=MAX_HOLE_SIZE
+        )
 
 
 if __name__ == "__main__":

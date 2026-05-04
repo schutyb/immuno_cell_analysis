@@ -54,9 +54,9 @@ import tifffile as tiff
 
 # ==== CONFIGURATION ====
 
-RGB_IMAGE_PATH = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit01/Mosaic07_4x4_FOV600_z150_32Sp/random_forest/rgb/Im_00006_pseudoRGB.tif"
+RGB_IMAGE_PATH = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit04/Mosaic08_4x4_FOV600_z155_32Sp/random_forest/rgb/Im_00016_pseudoRGB.tif"
 
-OUTPUT_MASK_PATH = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit01/Mosaic07_4x4_FOV600_z150_32Sp/random_forest/mask/Im_00006_mask.tif"
+OUTPUT_MASK_PATH = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit04/Mosaic08_4x4_FOV600_z155_32Sp/random_forest/mask/Im_00016_mask.tif"
 
 
 # ==== FUNCTIONS ====

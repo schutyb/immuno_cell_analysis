@@ -14,20 +14,21 @@ from sklearn.model_selection import train_test_split
 
 
 # =========================
-# EDITAR
+# CONFIG
 # =========================
 
-VISIT_FOLDER = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit01"
+PATIENT_FOLDER = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449"
 
-MODEL_OUTPUT = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/models/rf_rgb_visit01.joblib"
+MODEL_OUTPUT = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/models/rf_rgb_v2_all_visits.joblib"
 
 PATCH_DIR_NAME = "patch"
 PATCH_MASK_DIR_NAME = "patch_mask"
 
 RANDOM_SEED = 0
-NEGATIVE_TO_POSITIVE_RATIO = 4
 
-N_ESTIMATORS = 300
+NEGATIVE_TO_POSITIVE_RATIO = 2
+
+N_ESTIMATORS = 500
 MAX_DEPTH = 25
 
 
@@ -44,7 +45,7 @@ def load_rgb(path):
         img = np.array(Image.open(path).convert("RGB"))
 
     if img.ndim != 3 or img.shape[-1] != 3:
-        raise ValueError(f"RGB inválido: {path}, shape={img.shape}")
+        raise ValueError(f"Invalid RGB image: {path}, shape={img.shape}")
 
     return img.astype(np.uint8)
 
@@ -62,7 +63,7 @@ def load_mask(path):
 
 
 # =========================
-# FEATURES RGB ONLY
+# RGB FEATURES
 # =========================
 
 def extract_rgb_features(img):
@@ -124,11 +125,11 @@ def extract_rgb_features(img):
 # DATASET
 # =========================
 
-def find_patch_pairs(visit_folder):
-    visit_folder = Path(visit_folder)
+def find_patch_pairs(patient_folder):
+    patient_folder = Path(patient_folder)
 
     patch_files = sorted(
-        visit_folder.glob(f"Mosaic*/random_forest/{PATCH_DIR_NAME}/*.png")
+        patient_folder.glob(f"visit*/Mosaic*/random_forest/{PATCH_DIR_NAME}/*.png")
     )
 
     pairs = []
@@ -156,7 +157,7 @@ def sample_pixels_from_patch(img, mask, rng):
     neg_idx = np.where(y == 0)[0]
 
     if len(pos_idx) == 0:
-        n_neg = min(800, len(neg_idx))
+        n_neg = min(1200, len(neg_idx))
         selected_neg = rng.choice(neg_idx, size=n_neg, replace=False)
         return X[selected_neg], y[selected_neg]
 
@@ -176,6 +177,9 @@ def build_training_dataset(pairs):
     X_list = []
     y_list = []
 
+    n_positive_patches = 0
+    n_empty_patches = 0
+
     for img_path, mask_path in pairs:
         img = load_rgb(img_path)
         mask = load_mask(mask_path)
@@ -184,13 +188,25 @@ def build_training_dataset(pairs):
             print(f"SKIP shape mismatch: {img_path.name}")
             continue
 
+        if mask.sum() > 0:
+            n_positive_patches += 1
+        else:
+            n_empty_patches += 1
+
         Xp, yp = sample_pixels_from_patch(img, mask, rng)
 
         X_list.append(Xp)
         y_list.append(yp)
 
+    if len(X_list) == 0:
+        raise RuntimeError("No valid patch/mask pairs were loaded.")
+
     X = np.concatenate(X_list, axis=0)
     y = np.concatenate(y_list, axis=0)
+
+    print("\nPatch summary:")
+    print(f"Positive patches: {n_positive_patches}")
+    print(f"Empty patches:    {n_empty_patches}")
 
     return X, y
 
@@ -217,7 +233,7 @@ def train_random_forest(X, y):
     clf = RandomForestClassifier(
         n_estimators=N_ESTIMATORS,
         max_depth=MAX_DEPTH,
-        class_weight="balanced",
+        class_weight="balanced_subsample",
         n_jobs=-1,
         random_state=RANDOM_SEED,
         verbose=1,
@@ -235,12 +251,12 @@ def train_random_forest(X, y):
 
 
 def main():
-    pairs = find_patch_pairs(VISIT_FOLDER)
+    pairs = find_patch_pairs(PATIENT_FOLDER)
 
-    print(f"Patches encontrados: {len(pairs)}")
+    print(f"Patch/mask pairs found: {len(pairs)}")
 
     if len(pairs) == 0:
-        raise RuntimeError("No se encontraron patches/masks.")
+        raise RuntimeError("No patch/mask pairs found.")
 
     X, y = build_training_dataset(pairs)
 
@@ -251,7 +267,7 @@ def main():
 
     joblib.dump(clf, model_path)
 
-    print(f"\nModelo guardado en:")
+    print("\nModel saved at:")
     print(model_path)
 
 

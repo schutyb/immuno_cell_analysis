@@ -1,28 +1,39 @@
 import re
+from pathlib import Path
+
 import numpy as np
 import tifffile as tiff
-from pathlib import Path
 from PIL import Image
 
 
-VISIT_FOLDER = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit01"
+# =========================
+# CONFIG
+# =========================
+
+PATIENT_FOLDER = "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449"
 
 PATCH_SIZE = 128
 STRIDE = 128
 
-SAVE_EMPTY_PATCHES = True
-EMPTY_PATCH_KEEP_PROB = 0.4
-RANDOM_SEED = 0
+# If True, clears old patches before writing new ones
+CLEAR_OLD_PATCHES = True
 
-# descarta patches con demasiado negro/padding/zonas vacías
-MAX_BLACK_FRACTION = 0.30
-BLACK_THRESHOLD = 5
 
+# =========================
+# IO
+# =========================
 
 def load_rgb(path):
-    img = tiff.imread(path)
+    path = Path(path)
+
+    if path.suffix.lower() in [".tif", ".tiff"]:
+        img = tiff.imread(path)
+    else:
+        img = np.array(Image.open(path).convert("RGB"))
+
     if img.ndim != 3 or img.shape[-1] != 3:
-        raise ValueError(f"RGB inválido: {path}, shape={img.shape}")
+        raise ValueError(f"Invalid RGB image: {path}, shape={img.shape}")
+
     return img.astype(np.uint8)
 
 
@@ -32,16 +43,27 @@ def load_mask(path):
     return (mask > 0).astype(np.uint8)
 
 
+# =========================
+# MATCH RGB TILE TO MASK TILE
+# =========================
+
 def get_tile_id_from_mask(mask_path):
-    m = re.search(r"(Im_\d+)", mask_path.stem)
-    if m is None:
-        raise ValueError(f"No pude detectar tile ID en: {mask_path.name}")
-    return m.group(1)
+    """
+    Supports names like:
+    - Im_00001_mask.tif
+    - immune_cells_mask_Im_00001.tiff
+    """
+    match = re.search(r"(Im_\d+)", mask_path.stem)
+
+    if match is None:
+        raise ValueError(f"Could not detect tile ID from mask name: {mask_path.name}")
+
+    return match.group(1)
 
 
-def get_rgb_for_mask(mosaic_dir, mask_path):
+def get_rgb_for_mask(random_forest_dir, mask_path):
     tile_id = get_tile_id_from_mask(mask_path)
-    rgb_dir = mosaic_dir / "random_forest" / "rgb"
+    rgb_dir = random_forest_dir / "rgb"
 
     candidates = [
         rgb_dir / f"{tile_id}_pseudoRGB.tif",
@@ -49,62 +71,46 @@ def get_rgb_for_mask(mosaic_dir, mask_path):
         rgb_dir / f"{tile_id}_pseudoRGB.png",
     ]
 
-    for c in candidates:
-        if c.exists():
-            return c
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
 
-    raise FileNotFoundError(f"No encontré RGB para {tile_id} en {rgb_dir}")
-
-
-def is_bad_patch(img_patch):
-    """
-    Descarta patches artificiales por padding o casi vacíos.
-    """
-    black_fraction = np.mean(np.all(img_patch < BLACK_THRESHOLD, axis=-1))
-    return black_fraction > MAX_BLACK_FRACTION
+    raise FileNotFoundError(f"No RGB image found for {tile_id} in {rgb_dir}")
 
 
-def extract_patches_from_pair(rgb_path, mask_path, out_img_dir, out_mask_dir, rng, prefix):
+# =========================
+# PATCH EXTRACTION
+# =========================
+
+def extract_positive_patches(rgb_path, mask_path, out_img_dir, out_mask_dir, prefix):
     img = load_rgb(rgb_path)
     mask = load_mask(mask_path)
 
     if img.shape[:2] != mask.shape:
         raise ValueError(
-            f"RGB y máscara tienen distinto tamaño:\n"
-            f"RGB: {img.shape[:2]}\n"
+            f"RGB and mask size mismatch:\n"
+            f"RGB:  {img.shape[:2]}\n"
             f"Mask: {mask.shape}\n"
-            f"RGB path: {rgb_path}\n"
+            f"RGB path:  {rgb_path}\n"
             f"Mask path: {mask_path}"
         )
 
     h, w = mask.shape
 
     patch_idx = 1
-    n_pos = 0
-    n_empty = 0
-    n_skipped_black = 0
+    n_positive = 0
 
-    # Sin padding: solo patches completamente dentro de la imagen real
+    # No padding: only full 128x128 patches inside real image area
     for y in range(0, h - PATCH_SIZE + 1, STRIDE):
         for x in range(0, w - PATCH_SIZE + 1, STRIDE):
 
-            img_patch = img[y:y + PATCH_SIZE, x:x + PATCH_SIZE]
             mask_patch = mask[y:y + PATCH_SIZE, x:x + PATCH_SIZE]
 
-            if is_bad_patch(img_patch):
-                n_skipped_black += 1
+            # Save ONLY patches containing annotated cells
+            if mask_patch.sum() == 0:
                 continue
 
-            has_cells = mask_patch.sum() > 0
-
-            if has_cells:
-                n_pos += 1
-            else:
-                if not SAVE_EMPTY_PATCHES:
-                    continue
-                if rng.random() > EMPTY_PATCH_KEEP_PROB:
-                    continue
-                n_empty += 1
+            img_patch = img[y:y + PATCH_SIZE, x:x + PATCH_SIZE]
 
             patch_name = f"{prefix}_patch{patch_idx:04d}_y{y:04d}_x{x:04d}.png"
             mask_name = f"{prefix}_patch{patch_idx:04d}_y{y:04d}_x{x:04d}_mask.png"
@@ -113,96 +119,116 @@ def extract_patches_from_pair(rgb_path, mask_path, out_img_dir, out_mask_dir, rn
             Image.fromarray((mask_patch * 255).astype(np.uint8)).save(out_mask_dir / mask_name)
 
             patch_idx += 1
+            n_positive += 1
 
-    return n_pos, n_empty, n_skipped_black, patch_idx - 1
+    return n_positive
 
 
-def process_visit():
-    rng = np.random.default_rng(RANDOM_SEED)
-    visit_dir = Path(VISIT_FOLDER)
+# =========================
+# FOLDER WALK
+# =========================
 
-    mosaic_dirs = sorted([
-        p for p in visit_dir.iterdir()
-        if p.is_dir() and p.name.lower().startswith("mosaic")
+def find_random_forest_dirs(patient_folder):
+    patient_folder = Path(patient_folder)
+
+    return sorted([
+        p for p in patient_folder.glob("visit*/Mosaic*/random_forest")
+        if p.is_dir()
     ])
 
-    total_pos = 0
-    total_empty = 0
-    total_skipped_black = 0
-    total_saved = 0
 
-    print(f"Visit folder: {visit_dir}")
-    print(f"Mosaicos encontrados: {len(mosaic_dirs)}")
+def clear_old_outputs(out_img_dir, out_mask_dir):
+    if not CLEAR_OLD_PATCHES:
+        return
 
-    for mosaic_dir in mosaic_dirs:
-        mask_dir = mosaic_dir / "random_forest" / "mask"
+    for f in out_img_dir.glob("*.png"):
+        f.unlink()
 
-        if not mask_dir.exists():
-            print(f"\nSaltando {mosaic_dir.name}: no existe mask/")
-            continue
+    for f in out_mask_dir.glob("*.png"):
+        f.unlink()
 
-        mask_files = sorted(list(mask_dir.glob("*.tif")) + list(mask_dir.glob("*.tiff")))
 
-        if len(mask_files) == 0:
-            print(f"\nSaltando {mosaic_dir.name}: no hay máscaras")
-            continue
+def process_random_forest_dir(random_forest_dir):
+    mask_dir = random_forest_dir / "mask"
+    rgb_dir = random_forest_dir / "rgb"
 
-        out_img_dir = mosaic_dir / "random_forest" / "patch"
-        out_mask_dir = mosaic_dir / "random_forest" / "patch_mask"
+    if not mask_dir.exists():
+        print(f"Skipping: no mask folder → {random_forest_dir}")
+        return 0
 
-        out_img_dir.mkdir(parents=True, exist_ok=True)
-        out_mask_dir.mkdir(parents=True, exist_ok=True)
+    if not rgb_dir.exists():
+        print(f"Skipping: no rgb folder → {random_forest_dir}")
+        return 0
 
-        # limpiar outputs previos para no mezclar patches viejos con nuevos
-        for old_file in out_img_dir.glob("*.png"):
-            old_file.unlink()
-        for old_file in out_mask_dir.glob("*.png"):
-            old_file.unlink()
+    mask_files = sorted(list(mask_dir.glob("*.tif")) + list(mask_dir.glob("*.tiff")))
 
-        print(f"\nProcesando mosaico: {mosaic_dir.name}")
-        print(f"Masks encontradas: {len(mask_files)}")
+    if len(mask_files) == 0:
+        print(f"Skipping: no masks found → {mask_dir}")
+        return 0
 
-        for mask_path in mask_files:
-            try:
-                tile_id = get_tile_id_from_mask(mask_path)
-                rgb_path = get_rgb_for_mask(mosaic_dir, mask_path)
+    out_img_dir = random_forest_dir / "patch"
+    out_mask_dir = random_forest_dir / "patch_mask"
 
-                prefix = f"{visit_dir.name}_{mosaic_dir.name}_{tile_id}"
+    out_img_dir.mkdir(parents=True, exist_ok=True)
+    out_mask_dir.mkdir(parents=True, exist_ok=True)
 
-                print(f"  Tile: {tile_id}")
-                print(f"    RGB : {rgb_path.name}")
-                print(f"    Mask: {mask_path.name}")
+    clear_old_outputs(out_img_dir, out_mask_dir)
 
-                n_pos, n_empty, n_skipped_black, n_saved = extract_patches_from_pair(
-                    rgb_path=rgb_path,
-                    mask_path=mask_path,
-                    out_img_dir=out_img_dir,
-                    out_mask_dir=out_mask_dir,
-                    rng=rng,
-                    prefix=prefix,
-                )
+    mosaic_dir = random_forest_dir.parent
+    visit_dir = mosaic_dir.parent
 
-                total_pos += n_pos
-                total_empty += n_empty
-                total_skipped_black += n_skipped_black
-                total_saved += n_saved
+    print(f"\nProcessing:")
+    print(f"  Visit:  {visit_dir.name}")
+    print(f"  Mosaic: {mosaic_dir.name}")
+    print(f"  Masks:  {len(mask_files)}")
 
-                print(f"    positivos:       {n_pos}")
-                print(f"    vacíos:          {n_empty}")
-                print(f"    descartados bg:  {n_skipped_black}")
-                print(f"    guardados:       {n_saved}")
+    total_positive = 0
 
-            except Exception as e:
-                print(f"  ERROR en {mask_path.name}: {e}")
+    for mask_path in mask_files:
+        try:
+            tile_id = get_tile_id_from_mask(mask_path)
+            rgb_path = get_rgb_for_mask(random_forest_dir, mask_path)
+
+            prefix = f"{visit_dir.name}_{mosaic_dir.name}_{tile_id}"
+
+            n_positive = extract_positive_patches(
+                rgb_path=rgb_path,
+                mask_path=mask_path,
+                out_img_dir=out_img_dir,
+                out_mask_dir=out_mask_dir,
+                prefix=prefix,
+            )
+
+            total_positive += n_positive
+
+            print(f"  {tile_id}: {n_positive} positive patches")
+
+        except Exception as e:
+            print(f"  ERROR with {mask_path.name}: {e}")
+
+    print(f"  Total positive patches: {total_positive}")
+
+    return total_positive
+
+
+def main():
+    patient_dir = Path(PATIENT_FOLDER)
+
+    random_forest_dirs = find_random_forest_dirs(patient_dir)
+
+    print(f"Patient folder: {patient_dir}")
+    print(f"random_forest folders found: {len(random_forest_dirs)}")
+
+    total_patches = 0
+
+    for rf_dir in random_forest_dirs:
+        total_patches += process_random_forest_dir(rf_dir)
 
     print("\n======================")
-    print("RESUMEN FINAL")
+    print("FINAL SUMMARY")
     print("======================")
-    print(f"Patches positivos:      {total_pos}")
-    print(f"Patches vacíos:         {total_empty}")
-    print(f"Patches descartados bg: {total_skipped_black}")
-    print(f"Total guardados:        {total_saved}")
+    print(f"Total positive patches saved: {total_patches}")
 
 
 if __name__ == "__main__":
-    process_visit()
+    main()
