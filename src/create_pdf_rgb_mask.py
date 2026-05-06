@@ -22,10 +22,10 @@ PATIENT_DIR = Path(
 OUTPUT_DIR = PATIENT_DIR / "QC_rgb_mask_overlay_PDFs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-RGB_SUBDIR = Path("random_forest/rgb")
+RGB_SUBDIR = Path("RGB")   # <-- actualizado
 SEG_SUBDIR = Path("SegData")
 
-RGB_EXTENSIONS = [".tif", ".tiff", ".png", ".jpg", ".jpeg"]
+RGB_EXTENSIONS = [".png"]  # <-- solo PNG
 MASK_EXTENSIONS = [".png", ".tif", ".tiff"]
 
 PDF_DPI = 600
@@ -91,34 +91,32 @@ def read_mask(path):
 
 def find_rgb_files(mosaic_dir):
     rgb_dir = mosaic_dir / RGB_SUBDIR
+
     if not rgb_dir.exists():
         return []
 
     files = []
+
     for ext in RGB_EXTENSIONS:
         files.extend(rgb_dir.glob(f"*{ext}"))
 
-    # Avoid duplicates when tif/png/jpg versions exist.
-    # Prefer tif > png > jpg.
-    by_tile = {}
-    priority = {".tif": 0, ".tiff": 1, ".png": 2, ".jpg": 3, ".jpeg": 4}
+    # 🔥 ignorar mosaico reconstruido
+    files = [f for f in files if "mosaic" not in f.name.lower()]
 
-    for f in files:
-        tile = extract_tile_number(f.name)
-        if tile is None:
-            continue
+    # 🔥 opcional: asegurar que sean RGB generados
+    files = [f for f in files if "rgb" in f.name.lower()]
 
-        if tile not in by_tile:
-            by_tile[tile] = f
-        else:
-            if priority[f.suffix.lower()] < priority[by_tile[tile].suffix.lower()]:
-                by_tile[tile] = f
+    files = sorted(
+        files,
+        key=lambda f: extract_tile_number(f.name) or 9999
+    )
 
-    return [by_tile[k] for k in sorted(by_tile.keys())]
+    return files
 
 
 def find_mask_files(mosaic_dir):
     seg_dir = mosaic_dir / SEG_SUBDIR
+
     if not seg_dir.exists():
         return []
 
@@ -193,7 +191,6 @@ def plot_tile_page(pdf, rgb, mask, overlay, title):
         dpi=PDF_DPI,
         bbox_inches="tight",
         pad_inches=0.08,
-        metadata={"Creator": "RGB-mask-overlay QC script"},
     )
 
     plt.close(fig)
