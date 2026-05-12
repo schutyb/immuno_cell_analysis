@@ -543,6 +543,7 @@ The final method combines:
 
 ```text
 candidate object detection
++ Cadidate mask previously created with U-Net 
 + area filtering
 + FLIM phasor/lifetime filtering
 ```
