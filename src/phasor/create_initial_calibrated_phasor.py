@@ -2,28 +2,26 @@
 # -*- coding: utf-8 -*-
 
 """
-Create initial calibrated phasor mosaics from raw FLIM tiles.
+Create raw and coumarin-calibrated phasor mosaics from raw FLIM tiles.
 
 This script processes all visits and mosaics inside a patient folder. For each
 mosaic, it reads the raw FLIM tile stacks, separates the green and blue detector
-channels, computes the first-harmonic phasor coordinates, calibrates them using
-the visit-specific coumarin reference, and reconstructs the full mosaic using
-the snake acquisition layout.
+channels, computes the first-harmonic phasor coordinates, saves the raw phasor,
+then calibrates the phasor using the visit-specific coumarin reference and saves
+the calibrated phasor.
 
-The output is a calibrated, but not elastin-corrected, phasor TIFF stack.
+Outputs are stored inside each mosaic folder under:
 
-This is the first phasor representation used in the immuno-cell analysis
-pipeline. It is mainly used to:
-    1. visualize the initial calibrated phasor distribution;
-    2. run the first GMM-based separation of tissue components;
-    3. separate initial ROI classes such as elastin, melanin, and cells.
+    phasor/
 
-Important:
-    - This script performs coumarin calibration only.
-    - It does not apply elastin-based correction or visit-to-visit correction.
-    - Downstream correction scripts should use this output as input.
+Output RAW TIFF planes:
+    0 = DC intensity image
+    1 = raw G / real component, green detector
+    2 = raw S / imaginary component, green detector
+    3 = raw G / real component, blue detector
+    4 = raw S / imaginary component, blue detector
 
-Output TIFF planes:
+Output CALIBRATED TIFF planes:
     0 = DC intensity image
     1 = calibrated G / real component, green detector
     2 = calibrated S / imaginary component, green detector
@@ -39,11 +37,11 @@ import tifffile as tiff
 from phasorpy.lifetime import phasor_calibrate
 from phasorpy.phasor import phasor_from_signal
 
+
 # =========================
 # CONFIG
 # =========================
 
-# Change this to your local path where the patient data is stored.
 PATIENT_DIR = Path(
     "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449"
 ).expanduser()
@@ -52,8 +50,12 @@ FLIM_SUBDIR = "flim"
 COUMARIN_PREFIX = "coumarin"
 
 OUTPUT_SUBDIR = "phasor"
-OUTPUT_NAME = "phasor_calibrated_green_blue_mosaic.tif"
-METADATA_NAME = "phasor_calibrated_green_blue_mosaic_metadata.txt"
+
+RAW_OUTPUT_NAME = "phasor_raw_green_blue_mosaic.tif"
+CAL_OUTPUT_NAME = "phasor_calibrated_green_blue_mosaic.tif"
+
+RAW_METADATA_NAME = "phasor_raw_green_blue_mosaic_metadata.txt"
+CAL_METADATA_NAME = "phasor_calibrated_green_blue_mosaic_metadata.txt"
 
 N_GREEN = 16
 
@@ -70,7 +72,8 @@ OVERWRITE = True
 
 def natural_key(path):
     return [
-        int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(path.name))
+        int(t) if t.isdigit() else t.lower()
+        for t in re.split(r"(\d+)", str(path.name))
     ]
 
 
@@ -121,10 +124,11 @@ def find_coumarin_file(visit_dir):
 
 def read_stack_tyx(path):
     """
-    Lee TIFF FLIM y devuelve stack como:
+    Read FLIM TIFF and return stack as:
+
         T, Y, X
 
-    T suele ser 31 o 32.
+    T is usually 31 or 32.
     """
     arr = tiff.imread(path)
     arr = np.asarray(arr)
@@ -142,8 +146,8 @@ def read_stack_tyx(path):
 
 def split_green_blue(stack_tyx):
     """
-    Primeros 16 bins: detector verde.
-    Resto: detector azul.
+    First 16 bins: green detector.
+    Remaining bins: blue detector.
     """
     nt = stack_tyx.shape[0]
 
@@ -163,9 +167,9 @@ def compute_phasor_from_decay(decay_tyx):
     decay_tyx:
         T, Y, X
 
-    PhasorPy con numpy ndarray usa axis=-1.
-    Por eso convertimos:
-        T, Y, X  ->  Y, X, T
+    PhasorPy with numpy ndarray uses axis=-1.
+    Therefore:
+        T, Y, X -> Y, X, T
     """
     signal_yxt = np.moveaxis(decay_tyx, 0, -1).astype(np.float32, copy=False)
 
@@ -175,8 +179,6 @@ def compute_phasor_from_decay(decay_tyx):
     real = np.asarray(real, dtype=np.float32)
     imag = np.asarray(imag, dtype=np.float32)
 
-    # No reemplazamos por cero: cero es un phasor válido.
-    # Dejamos NaN donde no haya señal válida.
     mean[~np.isfinite(mean)] = np.nan
     real[~np.isfinite(real)] = np.nan
     imag[~np.isfinite(imag)] = np.nan
@@ -273,13 +275,35 @@ def stitch_tiles_snake(tile_imgs, nrows, ncols):
 
 def write_metadata(
     metadata_path,
+    title,
     mosaic_dir,
     tile_paths,
     coumarin_ref,
     output_path,
     phasor_stack,
+    is_calibrated,
 ):
-    text = f"""Phasor calibrated mosaic metadata
+    if is_calibrated:
+        planes = """0 = DC intensity image
+1 = calibrated G / real component, green detector
+2 = calibrated S / imaginary component, green detector
+3 = calibrated G / real component, blue detector
+4 = calibrated S / imaginary component, blue detector"""
+        calibration_text = f"""Calibration:
+reference = coumarin
+coumarin lifetime = {COUMARIN_LIFETIME_NS} ns
+laser frequency = {FREQUENCY_MHZ} MHz"""
+    else:
+        planes = """0 = DC intensity image
+1 = raw G / real component, green detector
+2 = raw S / imaginary component, green detector
+3 = raw G / real component, blue detector
+4 = raw S / imaginary component, blue detector"""
+        calibration_text = """Calibration:
+none
+This TIFF stores the raw first-harmonic phasor before coumarin calibration."""
+
+    text = f"""{title}
 
 Patient directory:
 {PATIENT_DIR}
@@ -300,11 +324,7 @@ Axis order:
 plane, y, x
 
 Planes:
-0 = DC intensity image
-1 = calibrated G / real component, green detector
-2 = calibrated S / imaginary component, green detector
-3 = calibrated G / real component, blue detector
-4 = calibrated S / imaginary component, blue detector
+{planes}
 
 Detector split:
 green detector = first {N_GREEN} bins
@@ -314,10 +334,7 @@ Invalid phasor pixels:
 G/S invalid pixels are stored as NaN, not zero.
 Use np.nanmean() for ROI-level averaging.
 
-Calibration:
-reference = coumarin
-coumarin lifetime = {COUMARIN_LIFETIME_NS} ns
-laser frequency = {FREQUENCY_MHZ} MHz
+{calibration_text}
 
 Coumarin file:
 {coumarin_ref["path"]}
@@ -351,11 +368,18 @@ def process_mosaic(mosaic_dir, coumarin_ref):
     out_dir = mosaic_dir / OUTPUT_SUBDIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    out_path = out_dir / OUTPUT_NAME
-    metadata_path = out_dir / METADATA_NAME
+    raw_out_path = out_dir / RAW_OUTPUT_NAME
+    cal_out_path = out_dir / CAL_OUTPUT_NAME
 
-    if out_path.exists() and not OVERWRITE:
-        print(f"[SKIP] Existe: {out_path}")
+    raw_metadata_path = out_dir / RAW_METADATA_NAME
+    cal_metadata_path = out_dir / CAL_METADATA_NAME
+
+    if (
+        raw_out_path.exists()
+        and cal_out_path.exists()
+        and not OVERWRITE
+    ):
+        print(f"[SKIP] Existen RAW y CAL: {mosaic_dir.name}")
         return
 
     if not flim_dir.exists():
@@ -373,10 +397,16 @@ def process_mosaic(mosaic_dir, coumarin_ref):
         )
 
     dc_tiles = []
-    g_green_tiles = []
-    s_green_tiles = []
-    g_blue_tiles = []
-    s_blue_tiles = []
+
+    g_green_raw_tiles = []
+    s_green_raw_tiles = []
+    g_blue_raw_tiles = []
+    s_blue_raw_tiles = []
+
+    g_green_cal_tiles = []
+    s_green_cal_tiles = []
+    g_blue_cal_tiles = []
+    s_blue_cal_tiles = []
 
     for tile_path in tile_paths:
         stack = read_stack_tyx(tile_path)
@@ -385,6 +415,17 @@ def process_mosaic(mosaic_dir, coumarin_ref):
         _, real_green, imag_green = compute_phasor_from_decay(green)
         _, real_blue, imag_blue = compute_phasor_from_decay(blue)
 
+        # -------------------------
+        # RAW PHASOR
+        # -------------------------
+        g_green_raw_tiles.append(real_green.astype(np.float32))
+        s_green_raw_tiles.append(imag_green.astype(np.float32))
+        g_blue_raw_tiles.append(real_blue.astype(np.float32))
+        s_blue_raw_tiles.append(imag_blue.astype(np.float32))
+
+        # -------------------------
+        # COUMARIN-CALIBRATED PHASOR
+        # -------------------------
         real_green_cal, imag_green_cal = calibrate_phasor(
             real_green,
             imag_green,
@@ -397,58 +438,122 @@ def process_mosaic(mosaic_dir, coumarin_ref):
             coumarin_ref["blue"],
         )
 
-        # DC total real, no mean de phasorpy.
+        g_green_cal_tiles.append(real_green_cal)
+        s_green_cal_tiles.append(imag_green_cal)
+        g_blue_cal_tiles.append(real_blue_cal)
+        s_blue_cal_tiles.append(imag_blue_cal)
+
+        # DC total, not phasorpy mean.
         dc = green.sum(axis=0).astype(np.float32) + blue.sum(axis=0).astype(np.float32)
         dc[~np.isfinite(dc)] = 0
-
         dc_tiles.append(dc)
-        g_green_tiles.append(real_green_cal)
-        s_green_tiles.append(imag_green_cal)
-        g_blue_tiles.append(real_blue_cal)
-        s_blue_tiles.append(imag_blue_cal)
 
     dc_mosaic = stitch_tiles_snake(dc_tiles, nrows, ncols)
-    g_green_mosaic = stitch_tiles_snake(g_green_tiles, nrows, ncols)
-    s_green_mosaic = stitch_tiles_snake(s_green_tiles, nrows, ncols)
-    g_blue_mosaic = stitch_tiles_snake(g_blue_tiles, nrows, ncols)
-    s_blue_mosaic = stitch_tiles_snake(s_blue_tiles, nrows, ncols)
-
     dc_mosaic[~np.isfinite(dc_mosaic)] = 0
 
-    phasor_stack = np.stack(
+    # -------------------------
+    # RAW MOSAICS
+    # -------------------------
+    g_green_raw_mosaic = stitch_tiles_snake(g_green_raw_tiles, nrows, ncols)
+    s_green_raw_mosaic = stitch_tiles_snake(s_green_raw_tiles, nrows, ncols)
+    g_blue_raw_mosaic = stitch_tiles_snake(g_blue_raw_tiles, nrows, ncols)
+    s_blue_raw_mosaic = stitch_tiles_snake(s_blue_raw_tiles, nrows, ncols)
+
+    raw_phasor_stack = np.stack(
         [
             dc_mosaic,
-            g_green_mosaic,
-            s_green_mosaic,
-            g_blue_mosaic,
-            s_blue_mosaic,
+            g_green_raw_mosaic,
+            s_green_raw_mosaic,
+            g_blue_raw_mosaic,
+            s_blue_raw_mosaic,
         ],
         axis=0,
     ).astype(np.float32)
 
-    tiff.imwrite(
-        out_path,
-        phasor_stack,
-        dtype=np.float32,
-        imagej=False,
-        metadata={
-            "axes": "CYX",
-            "planes": "0=DC, 1=G_green, 2=S_green, 3=G_blue, 4=S_blue",
-        },
-    )
+    # -------------------------
+    # CALIBRATED MOSAICS
+    # -------------------------
+    g_green_cal_mosaic = stitch_tiles_snake(g_green_cal_tiles, nrows, ncols)
+    s_green_cal_mosaic = stitch_tiles_snake(s_green_cal_tiles, nrows, ncols)
+    g_blue_cal_mosaic = stitch_tiles_snake(g_blue_cal_tiles, nrows, ncols)
+    s_blue_cal_mosaic = stitch_tiles_snake(s_blue_cal_tiles, nrows, ncols)
 
-    write_metadata(
-        metadata_path=metadata_path,
-        mosaic_dir=mosaic_dir,
-        tile_paths=tile_paths,
-        coumarin_ref=coumarin_ref,
-        output_path=out_path,
-        phasor_stack=phasor_stack,
-    )
+    cal_phasor_stack = np.stack(
+        [
+            dc_mosaic,
+            g_green_cal_mosaic,
+            s_green_cal_mosaic,
+            g_blue_cal_mosaic,
+            s_blue_cal_mosaic,
+        ],
+        axis=0,
+    ).astype(np.float32)
+
+    # -------------------------
+    # SAVE RAW
+    # -------------------------
+    if OVERWRITE or not raw_out_path.exists():
+        tiff.imwrite(
+            raw_out_path,
+            raw_phasor_stack,
+            dtype=np.float32,
+            imagej=False,
+            metadata={
+                "axes": "CYX",
+                "planes": (
+                    "0=DC, "
+                    "1=G_green_raw, 2=S_green_raw, "
+                    "3=G_blue_raw, 4=S_blue_raw"
+                ),
+            },
+        )
+
+        write_metadata(
+            metadata_path=raw_metadata_path,
+            title="Raw phasor mosaic metadata",
+            mosaic_dir=mosaic_dir,
+            tile_paths=tile_paths,
+            coumarin_ref=coumarin_ref,
+            output_path=raw_out_path,
+            phasor_stack=raw_phasor_stack,
+            is_calibrated=False,
+        )
+
+    # -------------------------
+    # SAVE CALIBRATED
+    # -------------------------
+    if OVERWRITE or not cal_out_path.exists():
+        tiff.imwrite(
+            cal_out_path,
+            cal_phasor_stack,
+            dtype=np.float32,
+            imagej=False,
+            metadata={
+                "axes": "CYX",
+                "planes": (
+                    "0=DC, "
+                    "1=G_green_cal, 2=S_green_cal, "
+                    "3=G_blue_cal, 4=S_blue_cal"
+                ),
+            },
+        )
+
+        write_metadata(
+            metadata_path=cal_metadata_path,
+            title="Coumarin-calibrated phasor mosaic metadata",
+            mosaic_dir=mosaic_dir,
+            tile_paths=tile_paths,
+            coumarin_ref=coumarin_ref,
+            output_path=cal_out_path,
+            phasor_stack=cal_phasor_stack,
+            is_calibrated=True,
+        )
 
     print(f"[OK] {mosaic_dir.name}")
-    print(f"     TIFF: {out_path}")
-    print(f"     META: {metadata_path}")
+    print(f"     RAW TIFF: {raw_out_path}")
+    print(f"     RAW META: {raw_metadata_path}")
+    print(f"     CAL TIFF: {cal_out_path}")
+    print(f"     CAL META: {cal_metadata_path}")
 
 
 def main():
