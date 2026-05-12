@@ -54,7 +54,8 @@ import pandas as pd
 # =========================
 
 EVAL_DIR = Path(
-    "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/segmentation_evaluation"
+    "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/"
+    "segmentation_evaluation"
 ).expanduser()
 
 TILE_CSV = EVAL_DIR / "segmentation_key_metrics_by_tile.csv"
@@ -100,18 +101,19 @@ def metric_title(metric):
 
 def load_final_method_only():
     if not TILE_CSV.exists():
-        raise FileNotFoundError(f"No encontré el CSV:\n{TILE_CSV}")
+        raise FileNotFoundError(f"Could not find CSV:\n{TILE_CSV}")
 
     df = pd.read_csv(TILE_CSV)
 
     if "method" not in df.columns:
-        raise ValueError("El CSV no tiene columna 'method'.")
+        raise ValueError("CSV does not contain 'method' column.")
 
     df = df[df["method"] == FINAL_METHOD_NAME_IN_CSV].copy()
 
     if len(df) == 0:
         raise ValueError(
-            f"No encontré filas para method='{FINAL_METHOD_NAME_IN_CSV}' en:\n{TILE_CSV}"
+            f"Could not find rows for method='{FINAL_METHOD_NAME_IN_CSV}' "
+            f"in:\n{TILE_CSV}"
         )
 
     df["method_label"] = FINAL_METHOD_LABEL
@@ -128,7 +130,6 @@ def build_summary(df):
     summary["metric_label"] = summary["metric"].map(metric_title)
     summary["method"] = FINAL_METHOD_LABEL
 
-    # order columns
     summary = summary[
         [
             "method",

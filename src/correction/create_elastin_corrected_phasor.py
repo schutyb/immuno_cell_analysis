@@ -30,7 +30,6 @@ import numpy as np
 import pandas as pd
 import tifffile
 
-
 # ============================================================
 # CONFIG
 # ============================================================
@@ -70,11 +69,9 @@ VALID_DC_THRESHOLD = 0.0
 # HELPERS
 # ============================================================
 
+
 def natural_key(path: Path):
-    return [
-        int(t) if t.isdigit() else t.lower()
-        for t in re.split(r"(\d+)", path.name)
-    ]
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path.name)]
 
 
 def infer_patient_visit_from_path(path: Path) -> tuple[str, str]:
@@ -120,7 +117,9 @@ def get_params_for_visit_channel(
     ]
 
     if rows.empty:
-        raise KeyError(f"No correction parameters found for visit={visit}, channel={channel}")
+        raise KeyError(
+            f"No correction parameters found for visit={visit}, channel={channel}"
+        )
 
     if len(rows) > 1:
         raise ValueError(
@@ -227,7 +226,8 @@ Planes:
 4 = elastin-corrected raw S / imaginary component, blue detector
 
 Correction model:
-The correction is applied in polar phasor coordinates independently for each detector channel.
+The correction is applied in polar phasor coordinates independently for each detector
+channel.
 
 For each pixel:
     modulation_corrected = modulation_raw * mod_scale
@@ -254,6 +254,7 @@ DC is copied from the raw phasor TIFF.
 # ============================================================
 # PROCESSING
 # ============================================================
+
 
 def correct_one_mosaic(raw_path: Path, params: pd.DataFrame) -> None:
     mosaic_dir = raw_path.parent.parent

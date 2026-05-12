@@ -33,7 +33,6 @@ import numpy as np
 import tifffile as tiff
 from phasorpy.plot import PhasorPlot
 
-
 # ============================================================
 # CONFIG
 # ============================================================
@@ -80,11 +79,9 @@ Y_LIMITS = None
 # HELPERS
 # ============================================================
 
+
 def natural_key(path: Path):
-    return [
-        int(t) if t.isdigit() else t.lower()
-        for t in re.split(r"(\d+)", path.name)
-    ]
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path.name)]
 
 
 def bin_nanmean_2d(img: np.ndarray, bin_size: int = 8) -> np.ndarray:
@@ -184,6 +181,7 @@ def print_range(label: str, g: np.ndarray, s: np.ndarray) -> None:
 # PROCESS ONE MOSAIC
 # ============================================================
 
+
 def process_mosaic(mosaic_dir: Path) -> None:
     phasor_dir = mosaic_dir / PHASOR_SUBDIR
 
@@ -282,6 +280,7 @@ def process_mosaic(mosaic_dir: Path) -> None:
 # ============================================================
 # MAIN
 # ============================================================
+
 
 def main() -> None:
     mosaic_dirs = sorted(

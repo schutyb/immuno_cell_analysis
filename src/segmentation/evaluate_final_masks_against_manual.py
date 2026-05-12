@@ -636,7 +636,7 @@ def save_readme(summary_df, output_path):
     lines.append("Ground truth\n")
     lines.append("------------\n")
     lines.append(
-        "Manual binary masks containing only immune cells were used as ground truth.\n\n"
+        "Manual binary masks containing only immune cells were used as GT.\n\n"
     )
 
     lines.append("Object matching\n")

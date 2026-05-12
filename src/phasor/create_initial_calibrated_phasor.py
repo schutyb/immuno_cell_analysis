@@ -37,7 +37,6 @@ import tifffile as tiff
 from phasorpy.lifetime import phasor_calibrate
 from phasorpy.phasor import phasor_from_signal
 
-
 # =========================
 # CONFIG
 # =========================
@@ -72,8 +71,7 @@ OVERWRITE = True
 
 def natural_key(path):
     return [
-        int(t) if t.isdigit() else t.lower()
-        for t in re.split(r"(\d+)", str(path.name))
+        int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(path.name))
     ]
 
 
@@ -374,11 +372,7 @@ def process_mosaic(mosaic_dir, coumarin_ref):
     raw_metadata_path = out_dir / RAW_METADATA_NAME
     cal_metadata_path = out_dir / CAL_METADATA_NAME
 
-    if (
-        raw_out_path.exists()
-        and cal_out_path.exists()
-        and not OVERWRITE
-    ):
+    if raw_out_path.exists() and cal_out_path.exists() and not OVERWRITE:
         print(f"[SKIP] Existen RAW y CAL: {mosaic_dir.name}")
         return
 

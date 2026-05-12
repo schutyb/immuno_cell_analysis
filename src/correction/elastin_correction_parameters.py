@@ -45,7 +45,6 @@ import pandas as pd
 import tifffile
 from skimage.measure import label, regionprops
 
-
 # ============================================================
 # CONFIG
 # ============================================================
@@ -87,6 +86,7 @@ S_MIN, S_MAX = -1.5, 1.5
 # DATA STRUCTURES
 # ============================================================
 
+
 @dataclass
 class Case:
     patient: str
@@ -101,11 +101,9 @@ class Case:
 # BASIC HELPERS
 # ============================================================
 
+
 def natural_key(path: Path):
-    return [
-        int(t) if t.isdigit() else t.lower()
-        for t in re.split(r"(\d+)", path.name)
-    ]
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path.name)]
 
 
 def infer_patient_visit_from_path(path: Path) -> tuple[str, str]:
@@ -147,6 +145,7 @@ def circular_mean(angles_rad: np.ndarray) -> float:
 # ============================================================
 # FILE SEARCH
 # ============================================================
+
 
 def find_elastin_mask(mosaic_dir: Path) -> Optional[Path]:
     seg_dir = mosaic_dir / SEGMENTATION_SUBDIR
@@ -194,7 +193,9 @@ def collect_cases(patient_dir: Path) -> list[Case]:
                 continue
 
             if elastin_mask_path is None:
-                print(f"[SKIP] Missing elastin mask: {mosaic_dir / SEGMENTATION_SUBDIR}")
+                print(
+                    f"[SKIP] Missing elastin mask: {mosaic_dir / SEGMENTATION_SUBDIR}"
+                )
                 continue
 
             patient, visit = infer_patient_visit_from_path(mosaic_dir)
@@ -216,6 +217,7 @@ def collect_cases(patient_dir: Path) -> list[Case]:
 # ============================================================
 # READERS
 # ============================================================
+
 
 def read_mask(mask_path: Path) -> np.ndarray:
     if mask_path.suffix.lower() in {".tif", ".tiff"}:
@@ -249,10 +251,14 @@ def read_raw_phasor_stack(phasor_path: Path) -> np.ndarray:
     stack = np.asarray(stack).squeeze()
 
     if stack.ndim != 3:
-        raise ValueError(f"Expected phasor stack CYX, got {stack.shape} in {phasor_path}")
+        raise ValueError(
+            f"Expected phasor stack CYX, got {stack.shape} in {phasor_path}"
+        )
 
     if stack.shape[0] < 5:
-        raise ValueError(f"Expected at least 5 planes, got {stack.shape[0]} in {phasor_path}")
+        raise ValueError(
+            f"Expected at least 5 planes, got {stack.shape[0]} in {phasor_path}"
+        )
 
     return stack.astype(np.float32, copy=False)
 
@@ -260,6 +266,7 @@ def read_raw_phasor_stack(phasor_path: Path) -> np.ndarray:
 # ============================================================
 # ROI EXTRACTION
 # ============================================================
+
 
 def roi_table_from_case(case: Case) -> pd.DataFrame:
     stack = read_raw_phasor_stack(case.raw_phasor_path)
@@ -298,14 +305,8 @@ def roi_table_from_case(case: Case) -> pd.DataFrame:
         valid_blue = np.isfinite(gb) & np.isfinite(sb)
 
         if FILTER_PHASOR_RANGE:
-            valid_green &= (
-                (gg >= G_MIN) & (gg <= G_MAX)
-                & (sg >= S_MIN) & (sg <= S_MAX)
-            )
-            valid_blue &= (
-                (gb >= G_MIN) & (gb <= G_MAX)
-                & (sb >= S_MIN) & (sb <= S_MAX)
-            )
+            valid_green &= (gg >= G_MIN) & (gg <= G_MAX) & (sg >= S_MIN) & (sg <= S_MAX)
+            valid_blue &= (gb >= G_MIN) & (gb <= G_MAX) & (sb >= S_MIN) & (sb <= S_MAX)
 
         if valid_green.sum() < MIN_VALID_PIXELS and valid_blue.sum() < MIN_VALID_PIXELS:
             continue
@@ -381,6 +382,7 @@ def roi_table_from_case(case: Case) -> pd.DataFrame:
 # CORRECTION PARAMETERS
 # ============================================================
 
+
 def compute_channel_correction(
     df_roi: pd.DataFrame,
     *,
@@ -434,7 +436,9 @@ def compute_channel_correction(
     visit_centroids["s_ref"] = s_ref
 
     visit_centroids["dphi"] = visit_centroids["phi_ref"] - visit_centroids["phi_visit"]
-    visit_centroids["mod_scale"] = visit_centroids["mod_ref"] / visit_centroids["mod_visit"]
+    visit_centroids["mod_scale"] = (
+        visit_centroids["mod_ref"] / visit_centroids["mod_visit"]
+    )
 
     # Useful QC fields
     visit_centroids["centroid_distance_to_global_before"] = np.sqrt(
@@ -491,6 +495,7 @@ def compute_correction_parameters(df_roi: pd.DataFrame) -> pd.DataFrame:
 # MAIN
 # ============================================================
 
+
 def main() -> None:
     cases = collect_cases(PATIENT_DIR)
 
@@ -506,7 +511,7 @@ def main() -> None:
             df_case = roi_table_from_case(case)
 
             if len(df_case) == 0:
-                print(f"[WARN] No elastin ROIs extracted: {case.visit} | {case.mosaic_name}")
+                print(f"[WARN] No elastin extracted: {case.visit} | {case.mosaic_name}")
                 continue
 
             all_tables.append(df_case)
@@ -525,13 +530,13 @@ def main() -> None:
     df_roi = pd.concat(all_tables, ignore_index=True)
     df_roi.to_csv(ROI_OUTPUT_CSV, index=False)
 
-    print(f"\n[INFO] Saved elastin ROI table:")
+    print("\n[INFO] Saved elastin ROI table:")
     print(f"       {ROI_OUTPUT_CSV}")
 
     params = compute_correction_parameters(df_roi)
     params.to_csv(PARAMS_OUTPUT_CSV, index=False)
 
-    print(f"\n[INFO] Saved correction parameters:")
+    print("\n[INFO] Saved correction parameters:")
     print(f"       {PARAMS_OUTPUT_CSV}")
 
     print("\nCorrection summary:")
