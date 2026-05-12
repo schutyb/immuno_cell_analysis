@@ -1,19 +1,70 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Plot QC figures for the initial calibrated phasor mosaic.
+
+This script reads the initial calibrated phasor TIFF generated from raw FLIM
+tiles after coumarin calibration. It plots the calibrated phasor distributions
+for the green and blue detector channels and generates pseudocolor images based
+on phase + intensity.
+
+This is used as an early QC step before elastin-based correction. The output is
+not the corrected phasor representation. It corresponds to the first calibrated
+phasor space used to inspect the data and guide the initial GMM separation of
+tissue components such as elastin, melanin, and cells.
+
+Expected input TIFF planes:
+    0 = DC intensity image
+    1 = calibrated G / real component, green detector
+    2 = calibrated S / imaginary component, green detector
+    3 = calibrated G / real component, blue detector
+    4 = calibrated S / imaginary component, blue detector
+
+How to use:
+    1. Edit PHASOR_PATH to point to a calibrated phasor TIFF.
+    2. Adjust BIN_SIZE, phase limits, and intensity parameters if needed.
+    3. Run from the repository root:
+
+        python -m src.phasor.phasor_plot
+
+    or directly:
+
+        python src/phasor/phasor_plot.py
+
+Output:
+    - A 2x2 QC figure showing:
+        1. green detector phasor histogram;
+        2. blue detector phasor histogram;
+        3. green detector pseudocolor image;
+        4. blue detector pseudocolor image.
+    - If SAVE_FIGURE=True, the figure is saved as:
+        phasor_qc_plot.png
+      in the same folder as the input phasor TIFF.
+"""
+
+import sys
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import tifffile as tiff
-import matplotlib.pyplot as plt
 from phasorpy.plot import PhasorPlot
 
-from color_scales import phase_intensity_to_rgb
+# Allow running this file directly with:
+#     python src/phasor/phasor_plot.py
+# while still importing from src/utils.
+if __name__ == "__main__" and __package__ is None:
+    repo_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(repo_root))
 
+from src.utils.color_scales import phase_intensity_to_rgb
 
 # =========================
 # CONFIG
 # =========================
 
+# Change this to your local path where the patient data is stored.
 PHASOR_PATH = Path(
     "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/visit01/"
     "Mosaic03_4x4_FOV600_z110_32Sp/phasor/"
@@ -23,7 +74,6 @@ PHASOR_PATH = Path(
 FREQUENCY_MHZ = 80.0
 BIN_SIZE = 8
 
-# Guardado
 SAVE_FIGURE = True
 FIG_DPI = 600
 
@@ -40,7 +90,23 @@ INTENSITY_PMAX = 99.0
 # HELPERS
 # =========================
 
+
 def bin_nanmean_2d(img, bin_size=8):
+    """
+    Spatially bin a 2D image using nanmean.
+
+    Parameters
+    ----------
+    img : ndarray
+        Input 2D image.
+    bin_size : int
+        Spatial binning factor.
+
+    Returns
+    -------
+    ndarray
+        Binned image.
+    """
     h, w = img.shape
 
     h2 = (h // bin_size) * bin_size
@@ -59,11 +125,17 @@ def bin_nanmean_2d(img, bin_size=8):
 
 
 def get_valid_points(g, s):
+    """
+    Return finite G/S phasor coordinates as 1D arrays.
+    """
     valid = np.isfinite(g) & np.isfinite(s)
     return g[valid].ravel(), s[valid].ravel()
 
 
 def plot_phasor_on_axis(ax, g, s, title, cmap):
+    """
+    Plot a 2D phasor histogram on a provided matplotlib axis.
+    """
     plot = PhasorPlot(
         ax=ax,
         frequency=FREQUENCY_MHZ,
@@ -84,7 +156,11 @@ def plot_phasor_on_axis(ax, g, s, title, cmap):
 # MAIN
 # =========================
 
+
 def main():
+    if not PHASOR_PATH.exists():
+        raise FileNotFoundError(f"No existe el archivo PHASOR_PATH:\n{PHASOR_PATH}")
+
     phasor = tiff.imread(PHASOR_PATH).astype(np.float32)
 
     if phasor.ndim != 3 or phasor.shape[0] < 5:

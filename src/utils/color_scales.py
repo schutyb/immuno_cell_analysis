@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
 Utilities for FLIM phasor color mapping and pseudocolor image generation.
 
@@ -44,7 +47,6 @@ from typing import Literal
 
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
-
 
 ScaleName = Literal["spectral", "reds_to_greens", "blues_to_greens"]
 
@@ -469,7 +471,7 @@ def phase_intensity_to_rgb(
     )
 
     if intensity_gamma != 1.0:
-        intensity_norm = intensity_norm ** intensity_gamma
+        intensity_norm = intensity_norm**intensity_gamma
 
     rgb *= intensity_norm[..., None]
     rgb[~valid] = 0.0
@@ -531,7 +533,7 @@ def make_phasor_background(
 
     gg, ss = np.meshgrid(g, s)
 
-    inside_semicircle = ((gg - 0.5) ** 2 + ss ** 2 <= 0.25) & (ss >= 0)
+    inside_semicircle = ((gg - 0.5) ** 2 + ss**2 <= 0.25) & (ss >= 0)
 
     phase_rad = np.arctan2(ss, gg)
     phase_deg = phase_rad_to_deg(phase_rad)

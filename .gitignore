@@ -17,17 +17,47 @@ dist/
 .mel-venv/
 
 # ----------------------------
-# OS files
+# OS / editor files
 # ----------------------------
 .DS_Store
+.vscode/
+.idea/
+
+# ----------------------------
+# Jupyter
+# ----------------------------
+.ipynb_checkpoints/
+
+# ----------------------------
+# Logs
+# ----------------------------
+*.log
 
 # ----------------------------
 # Data / outputs (do not track)
 # ----------------------------
 data/
+outputs/
+
 **/data_patient_*/
 **/phasor_out/
 **/phasor_qc/
 **/calculate_phasor/
 **/output/
 **/instance_mask/
+
+# ----------------------------
+# Temporary / experimental
+# ----------------------------
+tmp/
+temp/
+
+# ----------------------------
+# Large TIFF / PNG outputs
+# ----------------------------
+*.ome.tif
+*.ome.tiff
+
+# Optional:
+# *.png
+# *.pdf

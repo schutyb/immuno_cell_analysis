@@ -1,16 +1,51 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from pathlib import Path
+"""
+Create QC PDFs showing RGB tiles, manual cell masks, and overlays.
+
+This script is used to visually inspect manual expert annotations against the
+FLIM-derived RGB tiles.
+
+For each patient visit, the script creates one PDF containing all available
+manual masks and their matching RGB tiles.
+
+Input expected per mosaic:
+    <mosaic_dir>/RGB/
+        Im_00001_RGB.png
+        Im_00002_RGB.png
+        ...
+
+    <mosaic_dir>/<MANUAL_MASK_SUBDIR>/
+        manual mask files matching tile numbers
+
+Output:
+    <patient_dir>/QC_manual_mask_rgb_overlay_PDFs/
+        <patient>_<visit>_manual_mask_rgb_overlay_QC_600dpi.pdf
+
+How to use:
+    1. Edit PATIENT_DIR.
+    2. Edit MANUAL_MASK_SUBDIR to point to the manual mask folder.
+    3. Make sure RGB images were generated with src/utils/flim2rgb.py.
+    4. Run from the repository root:
+
+        python -m src.segmentation.export_rgb_manual_mask_overlay_pdf
+
+    or directly:
+
+        python src/segmentation/export_rgb_manual_mask_overlay_pdf.py
+"""
+
 import re
-import numpy as np
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+import numpy as np
+import tifffile as tiff
 from matplotlib.backends.backend_pdf import PdfPages
 from PIL import Image
-import tifffile as tiff
-from skimage.transform import resize
 from skimage.segmentation import find_boundaries
-
+from skimage.transform import resize
 
 # =========================
 # CONFIG
@@ -21,16 +56,20 @@ PATIENT_DIR = Path(
 ).expanduser()
 
 RGB_SUBDIR = Path("RGB")
+
+# Temporary/current location.
+# Recommended future location: Path("manual_masks")
 MANUAL_MASK_SUBDIR = Path("random_forest/mask")
 
 OUTPUT_DIR = PATIENT_DIR / "QC_manual_mask_rgb_overlay_PDFs"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 RGB_EXTENSIONS = [".png"]
 MASK_EXTENSIONS = [".png", ".tif", ".tiff"]
 
 PDF_DPI = 600
+
 OVERLAY_ALPHA = 0.20
+OVERLAY_COLOR = np.array([1.0, 1.0, 1.0])  # white
 BOUNDARY_COLOR = np.array([1.0, 1.0, 1.0])  # white
 
 
@@ -38,10 +77,11 @@ BOUNDARY_COLOR = np.array([1.0, 1.0, 1.0])  # white
 # HELPERS
 # =========================
 
+
 def natural_key(path):
     return [
-        int(t) if t.isdigit() else t.lower()
-        for t in re.split(r"(\d+)", str(path.name))
+        int(text) if text.isdigit() else text.lower()
+        for text in re.split(r"(\d+)", str(path.name))
     ]
 
 
@@ -52,30 +92,35 @@ def extract_tile_number(name):
         r"tile[_-]?(\d+)",
     ]
 
-    for pat in patterns:
-        m = re.search(pat, name, re.IGNORECASE)
-        if m:
-            return int(m.group(1))
+    for pattern in patterns:
+        match = re.search(pattern, name, re.IGNORECASE)
 
-    nums = re.findall(r"\d+", name)
-    return int(nums[-1]) if nums else None
+        if match:
+            return int(match.group(1))
+
+    numbers = re.findall(r"\d+", name)
+
+    return int(numbers[-1]) if numbers else None
 
 
 def read_rgb(path):
-    img = np.array(Image.open(path))
+    image = np.array(Image.open(path))
 
-    if img.ndim == 2:
-        img = np.stack([img, img, img], axis=-1)
+    if image.ndim == 2:
+        image = np.stack([image, image, image], axis=-1)
 
-    if img.shape[-1] == 4:
-        img = img[..., :3]
+    if image.shape[-1] == 4:
+        image = image[..., :3]
 
-    img = img.astype(np.float32)
+    image = image.astype(np.float32)
 
-    if img.max() > 1:
-        img /= 255.0 if img.max() <= 255 else img.max()
+    if image.max() > 1:
+        if image.max() <= 255:
+            image /= 255.0
+        else:
+            image /= image.max()
 
-    return np.clip(img, 0, 1)
+    return np.clip(image, 0, 1)
 
 
 def read_mask(path):
@@ -97,13 +142,17 @@ def find_rgb_files(mosaic_dir):
         return []
 
     files = []
-    for ext in RGB_EXTENSIONS:
-        files.extend(rgb_dir.glob(f"*{ext}"))
 
-    files = [f for f in files if "mosaic" not in f.name.lower()]
-    files = [f for f in files if "rgb" in f.name.lower()]
+    for extension in RGB_EXTENSIONS:
+        files.extend(rgb_dir.glob(f"*{extension}"))
 
-    return sorted(files, key=lambda f: extract_tile_number(f.name) or 9999)
+    files = [path for path in files if "mosaic" not in path.name.lower()]
+    files = [path for path in files if "rgb" in path.name.lower()]
+
+    return sorted(
+        files,
+        key=lambda path: extract_tile_number(path.name) or 999999,
+    )
 
 
 def find_manual_mask_files(mosaic_dir):
@@ -113,8 +162,9 @@ def find_manual_mask_files(mosaic_dir):
         return []
 
     files = []
-    for ext in MASK_EXTENSIONS:
-        files.extend(mask_dir.glob(f"*{ext}"))
+
+    for extension in MASK_EXTENSIONS:
+        files.extend(mask_dir.glob(f"*{extension}"))
 
     return sorted(files, key=natural_key)
 
@@ -123,29 +173,34 @@ def match_tile_file(tile_number, candidate_files):
     if tile_number is None:
         return None
 
-    for f in candidate_files:
-        if extract_tile_number(f.name) == tile_number:
-            return f
+    for path in candidate_files:
+        if extract_tile_number(path.name) == tile_number:
+            return path
 
     return None
 
 
+def resize_mask_to_rgb(mask, rgb_shape):
+    if mask.shape[:2] == rgb_shape[:2]:
+        return mask
+
+    resized = resize(
+        mask.astype(float),
+        rgb_shape[:2],
+        order=0,
+        preserve_range=True,
+        anti_aliasing=False,
+    )
+
+    return resized > 0.5
+
+
 def make_overlay(rgb, mask):
-    if mask.shape[:2] != rgb.shape[:2]:
-        mask = resize(
-            mask.astype(float),
-            rgb.shape[:2],
-            order=0,
-            preserve_range=True,
-            anti_aliasing=False,
-        ) > 0.5
+    mask = resize_mask_to_rgb(mask, rgb.shape)
 
     overlay = rgb.copy()
 
-    overlay[mask] = (
-        (1 - OVERLAY_ALPHA) * overlay[mask]
-        + OVERLAY_ALPHA * BOUNDARY_COLOR
-    )
+    overlay[mask] = (1 - OVERLAY_ALPHA) * overlay[mask] + OVERLAY_ALPHA * OVERLAY_COLOR
 
     boundaries = find_boundaries(mask, mode="outer")
     overlay[boundaries] = BOUNDARY_COLOR
@@ -173,8 +228,8 @@ def plot_page(pdf, rgb, mask, overlay, title):
     axes[2].imshow(overlay, interpolation="none")
     axes[2].set_title("RGB + manual mask overlay", fontsize=9)
 
-    for ax in axes:
-        ax.axis("off")
+    for axis in axes:
+        axis.axis("off")
 
     pdf.savefig(
         fig,
@@ -190,11 +245,21 @@ def plot_page(pdf, rgb, mask, overlay, title):
 # MAIN
 # =========================
 
+
 def main():
+    if not PATIENT_DIR.exists():
+        raise FileNotFoundError(f"No existe PATIENT_DIR:\n{PATIENT_DIR}")
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
     visit_dirs = sorted(
-        [p for p in PATIENT_DIR.glob("visit*") if p.is_dir()],
+        [path for path in PATIENT_DIR.glob("visit*") if path.is_dir()],
         key=natural_key,
     )
+
+    if len(visit_dirs) == 0:
+        print("[WARN] No se encontraron carpetas visit*.")
+        return
 
     missing_rgb = []
     total_pages = 0
@@ -211,7 +276,7 @@ def main():
 
         with PdfPages(output_pdf) as pdf:
             mosaic_dirs = sorted(
-                [p for p in visit_dir.glob("Mosaic*") if p.is_dir()],
+                [path for path in visit_dir.glob("Mosaic*") if path.is_dir()],
                 key=natural_key,
             )
 
@@ -225,7 +290,7 @@ def main():
                     continue
 
                 if len(rgb_files) == 0:
-                    print(f"[WARNING] No RGB files found in {mosaic_dir / RGB_SUBDIR}")
+                    print(f"[WARN] No RGB files found in {mosaic_dir / RGB_SUBDIR}")
                     missing_rgb.extend(manual_mask_files)
                     continue
 
@@ -234,7 +299,7 @@ def main():
                     rgb_file = match_tile_file(tile_number, rgb_files)
 
                     if rgb_file is None:
-                        print(f"[WARNING] No RGB match for manual mask: {mask_file}")
+                        print(f"[WARN] No RGB match for manual mask: {mask_file}")
                         missing_rgb.append(mask_file)
                         continue
 
@@ -243,9 +308,7 @@ def main():
                     overlay, mask = make_overlay(rgb, mask)
 
                     tile_label = (
-                        f"{tile_number:02d}"
-                        if tile_number is not None
-                        else "unknown"
+                        f"{tile_number:05d}" if tile_number is not None else "unknown"
                     )
 
                     title = (
@@ -274,10 +337,12 @@ def main():
     print("\nDone.")
     print(f"Total pages: {total_pages}")
 
-    if missing_rgb:
-        print(f"\nWARNING: {len(missing_rgb)} manual masks had no matching RGB.")
-        for f in missing_rgb[:30]:
-            print(f"Missing RGB for: {f}")
+    if len(missing_rgb) > 0:
+        print(f"\n[WARN] {len(missing_rgb)} manual masks had no matching RGB.")
+
+        for path in missing_rgb[:30]:
+            print(f"Missing RGB for: {path}")
+
         if len(missing_rgb) > 30:
             print("...")
 

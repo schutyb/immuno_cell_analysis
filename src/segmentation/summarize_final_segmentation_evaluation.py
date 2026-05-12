@@ -1,11 +1,53 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Summarize final segmentation performance for the selected pipeline.
+
+This script reads tile-level segmentation metrics and extracts only the final
+method used for downstream immuno-cell analysis.
+
+The goal is not to compare multiple segmentation algorithms, but to report the
+performance of the final selected pipeline against manual expert masks.
+
+Expected input:
+    segmentation_key_metrics_by_tile.csv
+
+Expected columns:
+    method
+    precision
+    object_precision
+    fp_objects
+    relative_cell_count_error
+
+Optional columns:
+    dice
+    iou
+
+Outputs:
+    - tile-level CSV for the final method only
+    - summary CSV with mean, std, median, and count
+    - boxplot panel of key metrics
+    - mean ± SD barplot
+    - text explanation for manuscript/report writing
+
+How to use:
+    1. Edit EVAL_DIR.
+    2. Edit FINAL_METHOD_NAME_IN_CSV if the method name changes.
+    3. Run:
+
+        python -m src.segmentation.summarize_final_segmentation_evaluation
+
+    or directly:
+
+        python src/segmentation/summarize_final_segmentation_evaluation.py
+"""
+
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-
 
 # =========================
 # CONFIG
@@ -50,6 +92,7 @@ METRIC_LABELS = {
 # =========================
 # HELPERS
 # =========================
+
 
 def metric_title(metric):
     return METRIC_LABELS.get(metric, metric.replace("_", " "))
@@ -278,6 +321,7 @@ def save_explanation_txt(df, summary_df, out_path):
 # MAIN
 # =========================
 
+
 def main():
     df = load_final_method_only()
 
@@ -286,7 +330,8 @@ def main():
     print(f"Output dir: {OUTPUT_DIR}")
 
     keep_cols = [
-        c for c in [
+        c
+        for c in [
             "visit",
             "mosaic",
             "tile",

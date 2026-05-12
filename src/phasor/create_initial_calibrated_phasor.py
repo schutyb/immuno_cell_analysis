@@ -1,19 +1,49 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from pathlib import Path
+"""
+Create initial calibrated phasor mosaics from raw FLIM tiles.
+
+This script processes all visits and mosaics inside a patient folder. For each
+mosaic, it reads the raw FLIM tile stacks, separates the green and blue detector
+channels, computes the first-harmonic phasor coordinates, calibrates them using
+the visit-specific coumarin reference, and reconstructs the full mosaic using
+the snake acquisition layout.
+
+The output is a calibrated, but not elastin-corrected, phasor TIFF stack.
+
+This is the first phasor representation used in the immuno-cell analysis
+pipeline. It is mainly used to:
+    1. visualize the initial calibrated phasor distribution;
+    2. run the first GMM-based separation of tissue components;
+    3. separate initial ROI classes such as elastin, melanin, and cells.
+
+Important:
+    - This script performs coumarin calibration only.
+    - It does not apply elastin-based correction or visit-to-visit correction.
+    - Downstream correction scripts should use this output as input.
+
+Output TIFF planes:
+    0 = DC intensity image
+    1 = calibrated G / real component, green detector
+    2 = calibrated S / imaginary component, green detector
+    3 = calibrated G / real component, blue detector
+    4 = calibrated S / imaginary component, blue detector
+"""
+
 import re
+from pathlib import Path
+
 import numpy as np
 import tifffile as tiff
-
-from phasorpy.phasor import phasor_from_signal
 from phasorpy.lifetime import phasor_calibrate
-
+from phasorpy.phasor import phasor_from_signal
 
 # =========================
 # CONFIG
 # =========================
 
+# Change this to your local path where the patient data is stored.
 PATIENT_DIR = Path(
     "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449"
 ).expanduser()
@@ -37,10 +67,10 @@ OVERWRITE = True
 # HELPERS
 # =========================
 
+
 def natural_key(path):
     return [
-        int(t) if t.isdigit() else t.lower()
-        for t in re.split(r"(\d+)", str(path.name))
+        int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(path.name))
     ]
 
 
@@ -66,7 +96,8 @@ def collect_tile_paths(flim_dir):
 
 def find_coumarin_file(visit_dir):
     coumarin_dirs = [
-        p for p in visit_dir.iterdir()
+        p
+        for p in visit_dir.iterdir()
         if p.is_dir() and p.name.lower().startswith(COUMARIN_PREFIX)
     ]
 
@@ -118,8 +149,7 @@ def split_green_blue(stack_tyx):
 
     if nt <= N_GREEN:
         raise ValueError(
-            f"El stack tiene {nt} bins, no alcanza para separar "
-            f"green={N_GREEN} + blue"
+            f"El stack tiene {nt} bins, no alcanza para separar green={N_GREEN} + blue"
         )
 
     green = stack_tyx[:N_GREEN]
@@ -315,6 +345,7 @@ Tiles used:
 # PROCESSING
 # =========================
 
+
 def process_mosaic(mosaic_dir, coumarin_ref):
     flim_dir = mosaic_dir / FLIM_SUBDIR
     out_dir = mosaic_dir / OUTPUT_SUBDIR
@@ -338,8 +369,7 @@ def process_mosaic(mosaic_dir, coumarin_ref):
 
     if len(tile_paths) != expected:
         raise ValueError(
-            f"{mosaic_dir.name}: esperaba {expected} tiles, "
-            f"encontré {len(tile_paths)}"
+            f"{mosaic_dir.name}: esperaba {expected} tiles, encontré {len(tile_paths)}"
         )
 
     dc_tiles = []
@@ -440,10 +470,7 @@ def main():
         print(f"[INFO] Blue ref: {coumarin_ref['blue']}")
 
         mosaic_dirs = sorted(
-            [
-                p for p in visit_dir.glob("Mosaic*")
-                if p.is_dir()
-            ],
+            [p for p in visit_dir.glob("Mosaic*") if p.is_dir()],
             key=natural_key,
         )
 
