@@ -2,13 +2,20 @@
 # -*- coding: utf-8 -*-
 
 """
-Apply global elastin-based correction to raw phasor mosaics.
+Apply elastin-based correction to raw phasor mosaics.
+
+This script applies visit-specific correction parameters to raw phasor mosaics.
+The correction parameters were computed using:
+
+    source = raw elastin centroid by visit
+    target = global calibrated elastin centroid
 
 Input:
     phasor/phasor_raw_green_blue_mosaic.tif
 
 Correction parameters:
-    analysis/elastin_correction/elastin_correction_parameters_raw_global.csv
+    analysis/elastin_correction/
+        elastin_correction_parameters_to_calibrated_global.csv
 
 Output:
     phasor/phasor_raw_green_blue_mosaic_elastin_corrected.tif
@@ -48,7 +55,7 @@ PARAMS_CSV = (
     PATIENT_DIR
     / "analysis"
     / "elastin_correction"
-    / "elastin_correction_parameters_raw_global.csv"
+    / "elastin_correction_parameters_to_calibrated_global.csv"
 )
 
 OVERWRITE = True
@@ -110,7 +117,7 @@ def get_params_for_visit_channel(
     params: pd.DataFrame,
     visit: str,
     channel: str,
-) -> tuple[float, float]:
+) -> tuple[float, float, dict]:
     rows = params[
         (params["visit"].astype(str) == str(visit))
         & (params["channel"].astype(str) == str(channel))
@@ -126,10 +133,21 @@ def get_params_for_visit_channel(
             f"Multiple parameter rows found for visit={visit}, channel={channel}"
         )
 
-    dphi = float(rows["dphi"].iloc[0])
-    mod_scale = float(rows["mod_scale"].iloc[0])
+    row = rows.iloc[0]
 
-    return dphi, mod_scale
+    dphi = float(row["dphi"])
+    mod_scale = float(row["mod_scale"])
+
+    extra = {
+        "source_raw_centroid_g": row.get("source_raw_centroid_g", np.nan),
+        "source_raw_centroid_s": row.get("source_raw_centroid_s", np.nan),
+        "target_g_ref": row.get("target_g_ref", np.nan),
+        "target_s_ref": row.get("target_s_ref", np.nan),
+        "target_mod_ref": row.get("target_mod_ref", np.nan),
+        "target_phi_ref": row.get("target_phi_ref", np.nan),
+    }
+
+    return dphi, mod_scale, extra
 
 
 def correct_channel(
@@ -192,6 +210,8 @@ def write_metadata(
     green_mod_scale: float,
     blue_dphi: float,
     blue_mod_scale: float,
+    green_extra: dict,
+    blue_extra: dict,
     params_csv: Path,
     corrected_stack: np.ndarray,
 ) -> None:
@@ -226,8 +246,12 @@ Planes:
 4 = elastin-corrected raw S / imaginary component, blue detector
 
 Correction model:
-The correction is applied in polar phasor coordinates independently for each detector
-channel.
+The correction is applied in polar phasor coordinates independently for each
+detector channel.
+
+Correction target:
+The source is the raw elastin centroid for each visit.
+The target is the global calibrated elastin centroid across visits.
 
 For each pixel:
     modulation_corrected = modulation_raw * mod_scale
@@ -236,10 +260,22 @@ For each pixel:
 Green channel correction:
 dphi = {green_dphi}
 mod_scale = {green_mod_scale}
+source_raw_centroid_g = {green_extra["source_raw_centroid_g"]}
+source_raw_centroid_s = {green_extra["source_raw_centroid_s"]}
+target_g_ref = {green_extra["target_g_ref"]}
+target_s_ref = {green_extra["target_s_ref"]}
+target_mod_ref = {green_extra["target_mod_ref"]}
+target_phi_ref = {green_extra["target_phi_ref"]}
 
 Blue channel correction:
 dphi = {blue_dphi}
 mod_scale = {blue_mod_scale}
+source_raw_centroid_g = {blue_extra["source_raw_centroid_g"]}
+source_raw_centroid_s = {blue_extra["source_raw_centroid_s"]}
+target_g_ref = {blue_extra["target_g_ref"]}
+target_s_ref = {blue_extra["target_s_ref"]}
+target_mod_ref = {blue_extra["target_mod_ref"]}
+target_phi_ref = {blue_extra["target_phi_ref"]}
 
 Valid DC threshold:
 {VALID_DC_THRESHOLD}
@@ -267,20 +303,19 @@ def correct_one_mosaic(raw_path: Path, params: pd.DataFrame) -> None:
         print(f"[SKIP] Exists: {out_path}")
         return
 
-    green_dphi, green_mod_scale = get_params_for_visit_channel(
+    green_dphi, green_mod_scale, green_extra = get_params_for_visit_channel(
         params,
         visit=visit,
         channel="green",
     )
 
-    blue_dphi, blue_mod_scale = get_params_for_visit_channel(
+    blue_dphi, blue_mod_scale, blue_extra = get_params_for_visit_channel(
         params,
         visit=visit,
         channel="blue",
     )
 
     raw = read_raw_phasor(raw_path)
-
     corrected = raw.astype(np.float32, copy=True)
 
     dc = raw[DC_IDX]
@@ -334,6 +369,8 @@ def correct_one_mosaic(raw_path: Path, params: pd.DataFrame) -> None:
         green_mod_scale=green_mod_scale,
         blue_dphi=blue_dphi,
         blue_mod_scale=blue_mod_scale,
+        green_extra=green_extra,
+        blue_extra=blue_extra,
         params_csv=PARAMS_CSV,
         corrected_stack=corrected,
     )
