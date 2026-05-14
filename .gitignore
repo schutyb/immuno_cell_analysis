@@ -61,3 +61,8 @@ temp/
 # Optional:
 # *.png
 # *.pdf
+
+# ----------------------------
+# Ignore other folders
+# ----------------------------
+src/images
