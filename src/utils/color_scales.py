@@ -483,8 +483,9 @@ def make_phasor_background(
     scale: ScaleName = "spectral",
     phase_min_deg: float = 0.0,
     phase_max_deg: float = 65.0,
-    phase_gamma: float = 0.6,
+    phase_gamma: float = 1,
     reverse_colors: bool = False,
+    background_blend: float = 0.45,
     nx: int = 700,
     ny: int = 450,
     n: int = 2048,
@@ -529,43 +530,47 @@ def make_phasor_background(
 
     which represents single-exponential lifetimes in phasor space.
     """
+
     g = np.linspace(0.0, 1.0, nx)
-
     s = np.linspace(0.0, 0.65, ny)
-
     gg, ss = np.meshgrid(g, s)
 
-    inside_semicircle = ((gg - 0.5) ** 2 + ss**2 <= 0.25) & (ss >= 0)
-
     phase_rad = np.arctan2(ss, gg)
-
     phase_deg = phase_rad_to_deg(phase_rad)
 
+    inside_phase_range = (
+        (phase_deg >= phase_min_deg)
+        & (phase_deg <= phase_max_deg)
+
+    )
+
+    inside_semicircle = (
+
+        ((gg - 0.5) ** 2 + ss**2 <= 0.25)
+        & (ss >= 0)
+        & inside_phase_range
+
+    )
+
     phase_norm = map_phase_deg_to_norm(
-
         phase_deg,
-
         phase_min_deg,
-
         phase_max_deg,
-
         phase_gamma,
 
     )
 
     if reverse_colors:
-
         phase_norm = 1.0 - phase_norm
-
     cmap = get_phase_colormap(scale, n=n)
-
     rgb = np.ones((ny, nx, 3), dtype=np.float32)
-
-    rgb_inside = cmap(phase_norm)[..., :3]
-
+    rgb_inside = cmap(phase_norm)[..., :3].astype(np.float32)
+    background_blend = float(np.clip(background_blend, 0.0, 1.0))
+    rgb_inside = rgb_inside * (1.0 - background_blend) + background_blend
     rgb[inside_semicircle] = rgb_inside[inside_semicircle]
 
     return rgb
+
 
 
 def make_phase_legend_strip(
