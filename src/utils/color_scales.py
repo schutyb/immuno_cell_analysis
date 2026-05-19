@@ -17,10 +17,25 @@ The main use case is fluorescence lifetime imaging microscopy (FLIM)
 visualization in phasor space, especially for pseudocolor rendering of
 phasor-derived phase information from calibrated G and S coordinates.
 
-Three colormap families are currently included:
+Colormap families currently included:
 
-- ``spectral``:
-    Full inverted spectrum, designed for broad phase/lifetime coverage.
+- ``spectral`` / ``spectral1``:
+    Original broad spectral scale, spanning red/orange/yellow/green/cyan/blue/
+    violet. This is intended for broad phase/lifetime coverage.
+
+- ``spectral2``:
+    Balanced spectral scale. Compared with ``spectral1``, this version reduces
+    the visually dominant yellow range and expands green/cyan/blue transitions.
+
+- ``spectral3``:
+    Spectral scale with stronger separation around yellow-to-green transitions.
+    This is useful when small phase changes around warm/green tones need to be
+    visually emphasized.
+
+- ``spectral4``:
+    Higher-contrast spectral scale for visual emphasis of biological phase
+    differences. This version creates sharper transitions between orange,
+    yellow, green, cyan, and blue.
 
 - ``reds_to_greens``:
     A red-to-green scale intended for green-detector FLIM visualization.
@@ -32,11 +47,11 @@ Three colormap families are currently included:
     It is complementary to ``reds_to_greens`` and maps lower phase values
     to pale blue / blue / cyan tones and higher phase values to green tones.
 
-This allows two detector channels to be visualized with related but distinct
-continuous phase scales:
+This allows several detector- and figure-specific visualizations:
 
 - green detector: red/orange/yellow -> green
 - blue detector: blue/cyan/teal -> green
+- broad phasor visualization: red/orange/yellow/green/cyan/blue/violet
 
 All RGB outputs are returned as floating-point arrays in the range [0, 1].
 """
@@ -48,7 +63,16 @@ from typing import Literal
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 
-ScaleName = Literal["spectral", "reds_to_greens", "blues_to_greens"]
+
+ScaleName = Literal[
+    "spectral",
+    "spectral1",
+    "spectral2",
+    "spectral3",
+    "spectral4",
+    "reds_to_greens",
+    "blues_to_greens",
+]
 
 
 def normalize_percentile(
@@ -100,6 +124,7 @@ def normalize_percentile(
     out[good] = (arr[good] - lo) / (hi - lo)
     out = np.clip(out, 0.0, 1.0)
     out[~good] = 0.0
+
     return out
 
 
@@ -182,46 +207,138 @@ def map_phase_deg_to_norm(
     return out
 
 
-def make_spectral_colormap(n: int = 2048) -> LinearSegmentedColormap:
+def make_spectral_colormap(
+    n: int = 2048,
+    variant: str = "spectral",
+) -> LinearSegmentedColormap:
     """
     Create a broad spectral FLIM colormap.
 
-    This colormap spans a wide perceptual range from red to violet and is
-    intended for general-purpose phase/lifetime rendering when a full
-    phase spectrum is desired.
+    This function supports multiple spectral variants with different internal
+    color spacing. All variants span a broad spectral range, but they distribute
+    the transitions between red, orange, yellow, green, cyan, blue, and violet
+    differently.
 
     Parameters
     ----------
     n : int, default=2048
         Number of interpolation levels in the colormap.
+    variant : str, default="spectral"
+        Spectral variant to generate. Supported values are:
+
+        - ``"spectral"`` or ``"spectral1"``:
+          Original spectral scale.
+
+        - ``"spectral2"``:
+          Balanced spectral scale with less dominant yellow and more expanded
+          green/cyan/blue transitions.
+
+        - ``"spectral3"``:
+          Stronger separation around yellow-to-green transitions.
+
+        - ``"spectral4"``:
+          High-contrast spectral scale with sharper biological visual
+          separation.
 
     Returns
     -------
     matplotlib.colors.LinearSegmentedColormap
         Spectral FLIM colormap.
+
+    Raises
+    ------
+    ValueError
+        If an unknown spectral variant is requested.
     """
-    colors = [
-        (0.00, "#C80000"),
-        (0.03, "#E60000"),
-        (0.07, "#FF2A00"),
-        (0.11, "#FF5500"),
-        (0.16, "#FF7A00"),
-        (0.21, "#FF9E00"),
-        (0.27, "#FFB800"),
-        (0.33, "#FFC000"),
-        (0.40, "#FFE000"),
-        (0.47, "#FFF200"),
-        (0.54, "#D8EC00"),
-        (0.61, "#8FD400"),
-        (0.69, "#32BE32"),
-        (0.76, "#00B050"),
-        (0.83, "#00A0C8"),
-        (0.89, "#0080FF"),
-        (0.94, "#304FFE"),
-        (0.97, "#3A00FF"),
-        (1.00, "#6A00FF"),
-    ]
-    return LinearSegmentedColormap.from_list("spectral_flim", colors, N=n)
+    if variant in ("spectral", "spectral1"):
+        colors = [
+            (0.00, "#C80000"),
+            (0.03, "#E60000"),
+            (0.07, "#FF2A00"),
+            (0.11, "#FF5500"),
+            (0.16, "#FF7A00"),
+            (0.21, "#FF9E00"),
+            (0.27, "#FFB800"),
+            (0.33, "#FFC000"),
+            (0.40, "#FFE000"),
+            (0.47, "#FFF200"),
+            (0.54, "#D8EC00"),
+            (0.61, "#8FD400"),
+            (0.69, "#32BE32"),
+            (0.76, "#00B050"),
+            (0.83, "#00A0C8"),
+            (0.89, "#0080FF"),
+            (0.94, "#304FFE"),
+            (0.97, "#3A00FF"),
+            (1.00, "#6A00FF"),
+        ]
+
+    elif variant == "spectral2":
+        colors = [
+            (0.00, "#C80000"),
+            (0.05, "#E60000"),
+            (0.10, "#FF2A00"),
+            (0.16, "#FF5500"),
+            (0.22, "#FF7A00"),
+            (0.28, "#FF9E00"),
+            (0.34, "#FFC000"),
+            (0.40, "#FFE000"),
+            (0.46, "#FFF200"),
+            (0.52, "#C8E800"),
+            (0.58, "#7FD000"),
+            (0.66, "#20B020"),
+            (0.75, "#00B050"),
+            (0.84, "#00A8C8"),
+            (0.92, "#0080FF"),
+            (0.97, "#304FFE"),
+            (1.00, "#6A00FF"),
+        ]
+
+    elif variant == "spectral3":
+        colors = [
+            (0.00, "#B00000"),
+            (0.06, "#E60000"),
+            (0.12, "#FF3300"),
+            (0.18, "#FF6600"),
+            (0.25, "#FF9900"),
+            (0.32, "#FFC000"),
+            (0.38, "#FFE000"),
+            (0.43, "#FFF200"),
+            (0.48, "#D8EC00"),
+            (0.54, "#9FD800"),
+            (0.61, "#4FC000"),
+            (0.69, "#00B050"),
+            (0.78, "#00B8A8"),
+            (0.86, "#008CFF"),
+            (0.93, "#304FFE"),
+            (0.98, "#4A00FF"),
+            (1.00, "#6A00FF"),
+        ]
+
+    elif variant == "spectral4":
+        colors = [
+            (0.00, "#8B0000"),
+            (0.07, "#D00000"),
+            (0.14, "#FF2200"),
+            (0.21, "#FF5A00"),
+            (0.28, "#FF9500"),
+            (0.35, "#FFC400"),
+            (0.42, "#FFF200"),
+            (0.47, "#D0EA00"),
+            (0.52, "#8AD000"),
+            (0.58, "#35B800"),
+            (0.65, "#00A54A"),
+            (0.73, "#00B8A8"),
+            (0.81, "#00A0E8"),
+            (0.89, "#006EFF"),
+            (0.95, "#304FFE"),
+            (1.00, "#6A00FF"),
+        ]
+
+    else:
+        raise ValueError(f"Unknown spectral variant: {variant}")
+
+    return LinearSegmentedColormap.from_list(f"{variant}_flim", colors, N=n)
 
 
 def make_reds_to_greens_colormap(n: int = 2048) -> LinearSegmentedColormap:
@@ -229,8 +346,8 @@ def make_reds_to_greens_colormap(n: int = 2048) -> LinearSegmentedColormap:
     Create a red-to-green FLIM colormap.
 
     This scale is intended for green-detector FLIM visualization, where a
-    restricted warm-to-green progression may be more appropriate than a
-    full spectral rainbow.
+    restricted warm-to-green progression may be more appropriate than a full
+    spectral rainbow.
 
     Parameters
     ----------
@@ -243,25 +360,26 @@ def make_reds_to_greens_colormap(n: int = 2048) -> LinearSegmentedColormap:
         Red-to-green FLIM colormap.
     """
     colors = [
-        (0.00, "#FCF8F8"),  # white with a hint of red
-        (0.03, "#FBECEC"),  # very pale pink
-        (0.06, "#F9DADA"),  # light pink
-        (0.09, "#F6C4C4"),  # soft pink
-        (0.12, "#F1A8A8"),  # warm pale red
-        (0.15, "#E60000"),  # red
-        (0.20, "#FF2A00"),  # red-orange
-        (0.25, "#FF5500"),  # orange-red
-        (0.30, "#FF7A00"),  # strong orange
-        (0.35, "#FF9E00"),  # orange
-        (0.40, "#FFB800"),  # orange-yellow
-        (0.50, "#FFC000"),  # yellow-orange
-        (0.55, "#FFE000"),  # warm yellow
-        (0.60, "#FFF200"),  # yellow
-        (0.65, "#D8EC00"),  # yellow-lime
-        (0.70, "#8FD400"),  # green-yellow
-        (0.80, "#00B050"),  # green
-        (1.00, "#00A54A"),  # keep green at the top
+        (0.00, "#FCF8F8"),
+        (0.03, "#FBECEC"),
+        (0.06, "#F9DADA"),
+        (0.09, "#F6C4C4"),
+        (0.12, "#F1A8A8"),
+        (0.15, "#E60000"),
+        (0.20, "#FF2A00"),
+        (0.25, "#FF5500"),
+        (0.30, "#FF7A00"),
+        (0.35, "#FF9E00"),
+        (0.40, "#FFB800"),
+        (0.50, "#FFC000"),
+        (0.55, "#FFE000"),
+        (0.60, "#FFF200"),
+        (0.65, "#D8EC00"),
+        (0.70, "#8FD400"),
+        (0.80, "#00B050"),
+        (1.00, "#00A54A"),
     ]
+
     return LinearSegmentedColormap.from_list("reds_to_greens_flim", colors, N=n)
 
 
@@ -270,8 +388,8 @@ def make_blues_to_greens_colormap(n: int = 2048) -> LinearSegmentedColormap:
     Create a blue-to-green FLIM colormap.
 
     This scale is intended for blue-detector FLIM visualization and is
-    complementary to ``reds_to_greens``. It maps lower phase values to
-    pale blue / blue / cyan tones and higher phase values to green tones.
+    complementary to ``reds_to_greens``. It maps lower phase values to pale blue,
+    blue, and cyan tones, and higher phase values to green tones.
 
     Parameters
     ----------
@@ -284,23 +402,24 @@ def make_blues_to_greens_colormap(n: int = 2048) -> LinearSegmentedColormap:
         Blue-to-green FLIM colormap.
     """
     colors = [
-        (0.00, "#F7FBFF"),  # almost white with blue hint
-        (0.03, "#EAF4FF"),  # very pale blue
-        (0.06, "#D6ECFF"),  # pale blue
-        (0.10, "#BBDFFF"),  # light blue
-        (0.15, "#8FCBFF"),  # soft blue
-        (0.20, "#5AB3FF"),  # blue
-        (0.25, "#2D9CFF"),  # stronger blue
-        (0.30, "#0080FF"),  # vivid blue
-        (0.36, "#0096D6"),  # blue-cyan
-        (0.42, "#00A6C8"),  # cyan-blue
-        (0.48, "#00B8B0"),  # cyan-teal
-        (0.55, "#00C896"),  # teal-green
-        (0.62, "#00D27A"),  # greenish teal
-        (0.70, "#3BD35F"),  # light green
-        (0.80, "#00B050"),  # green
-        (1.00, "#00A54A"),  # keep green at the top
+        (0.00, "#F7FBFF"),
+        (0.03, "#EAF4FF"),
+        (0.06, "#D6ECFF"),
+        (0.10, "#BBDFFF"),
+        (0.15, "#8FCBFF"),
+        (0.20, "#5AB3FF"),
+        (0.25, "#2D9CFF"),
+        (0.30, "#0080FF"),
+        (0.36, "#0096D6"),
+        (0.42, "#00A6C8"),
+        (0.48, "#00B8B0"),
+        (0.55, "#00C896"),
+        (0.62, "#00D27A"),
+        (0.70, "#3BD35F"),
+        (0.80, "#00B050"),
+        (1.00, "#00A54A"),
     ]
+
     return LinearSegmentedColormap.from_list("blues_to_greens_flim", colors, N=n)
 
 
@@ -313,7 +432,8 @@ def get_phase_colormap(
 
     Parameters
     ----------
-    name : {"spectral", "reds_to_greens", "blues_to_greens"}, default="spectral"
+    name : {"spectral", "spectral1", "spectral2", "spectral3", "spectral4",
+            "reds_to_greens", "blues_to_greens"}, default="spectral"
         Name of the requested colormap.
     n : int, default=2048
         Number of interpolation levels in the colormap.
@@ -328,10 +448,12 @@ def get_phase_colormap(
     ValueError
         If an unknown colormap name is requested.
     """
-    if name == "spectral":
-        return make_spectral_colormap(n=n)
+    if name in ("spectral", "spectral1", "spectral2", "spectral3", "spectral4"):
+        return make_spectral_colormap(n=n, variant=name)
+
     if name == "reds_to_greens":
         return make_reds_to_greens_colormap(n=n)
+
     if name == "blues_to_greens":
         return make_blues_to_greens_colormap(n=n)
 
@@ -349,14 +471,12 @@ def phase_to_rgb(
     """
     Convert phase values in degrees directly into RGB colors.
 
-    This function is useful when the phase has already been computed and only
-    colorization is needed.
-
     Parameters
     ----------
     phase_deg : numpy.ndarray
         Phase array in degrees.
-    scale : {"spectral", "reds_to_greens", "blues_to_greens"}, default="spectral"
+    scale : {"spectral", "spectral1", "spectral2", "spectral3", "spectral4",
+             "reds_to_greens", "blues_to_greens"}, default="spectral"
         Colormap family used for rendering.
     phase_min_deg : float, default=0.0
         Lower phase bound for color mapping.
@@ -413,9 +533,9 @@ def phase_intensity_to_rgb(
     s : numpy.ndarray
         Imaginary component of the phasor coordinates.
     intensity : numpy.ndarray
-        Intensity-like image used for brightness modulation. This is typically
-        the mean signal, photon count, or another positive-valued intensity map.
-    scale : {"spectral", "reds_to_greens", "blues_to_greens"}, default="spectral"
+        Intensity-like image used for brightness modulation.
+    scale : {"spectral", "spectral1", "spectral2", "spectral3", "spectral4",
+             "reds_to_greens", "blues_to_greens"}, default="spectral"
         Colormap family used for rendering.
     phase_min_deg : float, default=0.0
         Lower phase bound for color mapping.
@@ -483,7 +603,7 @@ def make_phasor_background(
     scale: ScaleName = "spectral",
     phase_min_deg: float = 0.0,
     phase_max_deg: float = 65.0,
-    phase_gamma: float = 1,
+    phase_gamma: float = 1.0,
     reverse_colors: bool = False,
     background_blend: float = 0.45,
     nx: int = 700,
@@ -497,19 +617,27 @@ def make_phasor_background(
     the phase for each coordinate in the phasor plane (g, s) and mapping that
     phase to a chosen FLIM colormap.
 
-    Only the region inside the universal semicircle is colored. All pixels
-    outside the semicircle are left white.
+    Only the region inside the universal semicircle and within the requested
+    phase range is colored. Pixels outside that region are left white.
 
     Parameters
     ----------
-    scale : {"spectral", "reds_to_greens", "blues_to_greens"}, default="spectral"
+    scale : {"spectral", "spectral1", "spectral2", "spectral3", "spectral4",
+             "reds_to_greens", "blues_to_greens"}, default="spectral"
         Colormap family used to render phase values.
     phase_min_deg : float, default=0.0
-        Minimum phase (degrees) mapped to the start of the colormap.
+        Minimum phase in degrees mapped to the start of the colormap.
+        Regions below this phase are not colored.
     phase_max_deg : float, default=65.0
-        Maximum phase (degrees) mapped to the end of the colormap.
-    phase_gamma : float, default=0.6
+        Maximum phase in degrees mapped to the end of the colormap.
+        Regions above this phase are not colored.
+    phase_gamma : float, default=1.0
         Gamma correction applied to the normalized phase values.
+    reverse_colors : bool, default=False
+        If True, reverse the phase-to-color mapping.
+    background_blend : float, default=0.45
+        Blend factor with white to soften background colors.
+        0 gives the original saturated colormap; 1 gives white.
     nx : int, default=700
         Horizontal resolution of the background image.
     ny : int, default=450
@@ -520,7 +648,7 @@ def make_phasor_background(
     Returns
     -------
     numpy.ndarray
-        RGB image with shape (ny, nx, 3) representing the phasor background.
+        RGB image with shape ``(ny, nx, 3)`` representing the phasor background.
 
     Notes
     -----
@@ -530,9 +658,9 @@ def make_phasor_background(
 
     which represents single-exponential lifetimes in phasor space.
     """
-
     g = np.linspace(0.0, 1.0, nx)
     s = np.linspace(0.0, 0.65, ny)
+
     gg, ss = np.meshgrid(g, s)
 
     phase_rad = np.arctan2(ss, gg)
@@ -541,36 +669,35 @@ def make_phasor_background(
     inside_phase_range = (
         (phase_deg >= phase_min_deg)
         & (phase_deg <= phase_max_deg)
-
     )
 
     inside_semicircle = (
-
         ((gg - 0.5) ** 2 + ss**2 <= 0.25)
         & (ss >= 0)
         & inside_phase_range
-
     )
 
     phase_norm = map_phase_deg_to_norm(
-        phase_deg,
-        phase_min_deg,
-        phase_max_deg,
-        phase_gamma,
-
+        phase_deg=phase_deg,
+        phase_min_deg=phase_min_deg,
+        phase_max_deg=phase_max_deg,
+        phase_gamma=phase_gamma,
     )
 
     if reverse_colors:
         phase_norm = 1.0 - phase_norm
+
     cmap = get_phase_colormap(scale, n=n)
+
     rgb = np.ones((ny, nx, 3), dtype=np.float32)
     rgb_inside = cmap(phase_norm)[..., :3].astype(np.float32)
+
     background_blend = float(np.clip(background_blend, 0.0, 1.0))
     rgb_inside = rgb_inside * (1.0 - background_blend) + background_blend
+
     rgb[inside_semicircle] = rgb_inside[inside_semicircle]
 
     return rgb
-
 
 
 def make_phase_legend_strip(
@@ -592,7 +719,8 @@ def make_phase_legend_strip(
 
     Parameters
     ----------
-    scale : {"spectral", "reds_to_greens", "blues_to_greens"}, default="spectral"
+    scale : {"spectral", "spectral1", "spectral2", "spectral3", "spectral4",
+             "reds_to_greens", "blues_to_greens"}, default="spectral"
         Colormap family used to render phase values.
     phase_min_deg : float, default=0.0
         Minimum phase represented in the legend.
