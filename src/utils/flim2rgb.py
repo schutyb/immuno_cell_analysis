@@ -64,7 +64,7 @@ from PIL import Image
 # =========================
 
 PATIENT_FOLDER = Path(
-    "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449"
+    "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p427"
 ).expanduser()
 
 FLIM_SUBDIR = "flim"

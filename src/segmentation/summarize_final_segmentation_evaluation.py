@@ -55,18 +55,24 @@ import pandas as pd
 
 EVAL_DIR = Path(
     "/Users/schutyb/Documents/balu_lab/dod/data_raw/patients/p449/"
-    "segmentation_evaluation"
+    "segmentation_evaluation/global_gmm_green_corrected_cells_from_mosaic"
 ).expanduser()
 
 TILE_CSV = EVAL_DIR / "segmentation_key_metrics_by_tile.csv"
 
 OUTPUT_DIR = EVAL_DIR / "final_unet_flim_evaluation"
+
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 FIG_DPI = 600
 
-FINAL_METHOD_NAME_IN_CSV = "PeterChang_area_FLIM"
-FINAL_METHOD_LABEL = "U-Net + FLIM"
+FINAL_METHOD_NAME_IN_CSV = (
+    "Global corrected green phasor GMM cells mask"
+)
+
+FINAL_METHOD_LABEL = (
+    "Corrected phasor GMM"
+)
 
 KEY_METRICS = [
     "precision",

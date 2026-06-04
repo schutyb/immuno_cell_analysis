@@ -144,18 +144,37 @@ def read_stack_tyx(path):
 
 def split_green_blue(stack_tyx):
     """
-    First 16 bins: green detector.
-    Remaining bins: blue detector.
+    Split the FLIM stack into green and blue detector channels.
+
+    First 16 bins:
+        Green detector
+
+    Remaining bins:
+        Blue detector
+
+    IMPORTANT
+    ---------
+    In this dataset, the last green bin is empty/artifactual.
+    Before any phasor calculation, the last green bin is replaced
+    by the penultimate green bin.
+
+    This correction is applied consistently to both tissue FLIM
+    data and coumarin calibration measurements.
     """
     nt = stack_tyx.shape[0]
 
     if nt <= N_GREEN:
         raise ValueError(
-            f"El stack tiene {nt} bins, no alcanza para separar green={N_GREEN} + blue"
+            f"Stack contains {nt} bins, which is insufficient for "
+            f"green={N_GREEN} + blue channel separation."
         )
 
-    green = stack_tyx[:N_GREEN]
-    blue = stack_tyx[N_GREEN:]
+    green = stack_tyx[:N_GREEN].copy()
+    blue = stack_tyx[N_GREEN:].copy()
+
+    # Replace the empty/artifactual last green bin
+    # with the penultimate green bin.
+    green[-1, :, :] = green[-2, :, :]
 
     return green, blue
 

@@ -66,6 +66,7 @@ immuno_cell_analysis/
 │   └── utils/
 │       ├── flim2rgb.py
 │       ├── color_scales.py
+|       ├── make_rgb_mosaic_pdf.py
 │       └── ...
 │
 ├── pyproject.toml
