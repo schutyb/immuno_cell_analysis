@@ -1,327 +1,110 @@
 # immuno_cell_analysis
 
-Pipeline for FLIM phasor–based analysis, segmentation, correction, and instance-level characterization of immuno-cells in melanoma tissue.
+Reproducible FLIM phasor preprocessing and blue-derived self-calibration.
 
-This repository is designed as a modular and reproducible framework for:
+The production pipeline is intentionally small. Historical calibration,
+image-composition, and segmentation experiments have been removed now that the
+final calibration method is fixed. A clean Coumarin reference analysis is kept
+to document and reproduce the modality-specific offsets.
 
-- FLIM phasor analysis
-- RGB reconstruction from FLIM decays
-- immune-cell segmentation
-- elastin-based correction
-- ROI-level phasor filtering
-- downstream quantitative cell analysis
+## Final method
 
-The project is organized into independent analysis blocks so that each stage of the pipeline can be developed, validated, and reused separately.
+1. Read the raw FLIM tiles and correct/split the decay bins.
+2. Resample every temporal-bin image independently with the established cubic
+   downsample/upsample method.
+3. Calculate first-harmonic DC, G, and S from the resampled decays.
+4. For calibration estimation only, apply a 7x7 median filter twice and retain
+   the brightest 35% of finite positive-DC pixels in each tile.
+5. Estimate the blue rotation for each tile against the 0--3.5 ns segment and
+   use the histogram mode of the tile rotations as the mosaic rotation.
+6. Calibrate green using:
+   - blue rotation +2.1 degrees for simultaneous split (`Sp`) acquisitions;
+   - blue rotation +1.55 degrees for sequential A1/A0 acquisitions;
+   - its own mode against the 3.5--0.1 ns green segment when blue is absent.
+7. Apply calibration to the original unfiltered and unthresholded G/S arrays.
+8. Median-filter the calibrated DC/G/S maps with a 7x7 kernel twice and save
+   them without DC thresholding.
+9. Create a representative green/blue phasor plot from the saved TIFF. The
+   plot retains the brightest 40% of DC for visualization only.
 
-Raw imaging data (FLIM stacks, mosaics, masks, and large outputs) are intentionally excluded from version control.
-
----
-
-# Scientific goal
-
-The main goal of this project is to:
-
-- Analyze FLIM data acquired from melanoma tissue
-- Detect and characterize immune-cell populations
-- Combine phasor-based lifetime information with segmentation
-- Quantify cell populations longitudinally across visits
-- Enable downstream biological and statistical analysis
-- Study relationships between:
-  - FLIM lifetime
-  - morphology
-  - spatial organization
-  - treatment response
-
----
-
-# Repository structure
+## Project structure
 
 ```text
-immuno_cell_analysis/
+src/
+├── calibration_by_blue/
+│   ├── calculate_corrected_phasor.py  # resampling and raw phasors
+│   ├── estimate_mosaic_deltas.py      # tile deltas and mosaic modes
+│   ├── calibrate_phasors.py           # final calibration, TIFF and plot
+│   ├── flim_preprocessing.py          # resampling helpers
+│   ├── flim_io.py                     # FLIM discovery and bin correction
+│   └── README.md                      # detailed contract and options
+├── coumarin_analysis/
+│   ├── analyze_coumarin.py            # reference corrections and differences
+│   └── README.md
+└── utils/                             # retained shared RGB utilities
 
-├── src/
-│
-│   ├── segmentation/
-│   │   ├── README_SEG.md
-│   │   ├── build_area_phasor_cell_mask.py
-│   │   ├── evaluate_final_masks_against_manual.py
-│   │   ├── summarize_final_segmentation_evaluation.py
-│   │   ├── analyze_segmentation_metrics_by_depth.py
-│   │   ├── export_rgb_segdata_overlay_pdf.py
-│   │   ├── export_rgb_manual_mask_overlay_pdf.py
-│   │   ├── export_candidate_vs_final_mask_pdf.py
-│   │   └── export_manual_vs_final_mask_overlay.py
-│
-│   ├── phasor/
-│   │   ├── create_calibrated_phasor_mosaic.py
-│   │   ├── phasor_calibrated_plot.py
-│   │   └── ...
-│
-│   ├── correction/
-│   │   └── ...
-│
-│   ├── analysis/
-│   │   └── ...
-│
-│   └── utils/
-│       ├── flim2rgb.py
-│       ├── color_scales.py
-|       ├── make_rgb_mosaic_pdf.py
-│       └── ...
-│
-├── pyproject.toml
-├── README.md
-└── .gitignore
+tests/
+└── test_calibrate_phasors.py
 ```
 
----
+## Run
 
-# Pipeline overview
-
-The pipeline is divided into multiple logical stages.
-
----
-
-# 1. FLIM → RGB reconstruction
-
-Scripts in:
-
-```text
-src/utils/
-```
-
-Main script:
-
-```text
-flim2rgb.py
-```
-
-This stage:
-
-- reads raw FLIM stacks
-- separates green and blue detector channels
-- reconstructs RGB representations from decay bins
-- normalizes all tiles consistently
-- reconstructs RGB mosaics
-
-Used for:
-
-- visualization
-- annotation
-- segmentation QC
-
----
-
-# 2. Phasor computation and calibration
-
-Scripts in:
-
-```text
-src/phasor/
-```
-
-Main scripts:
-
-```text
-create_calibrated_phasor_mosaic.py
-phasor_calibrated_plot.py
-```
-
-This stage:
-
-- computes first-harmonic phasors
-- calibrates phasors using coumarin reference data
-- creates phasor mosaics
-- visualizes phasor distributions
-- generates pseudocolor lifetime maps
-
-Outputs include:
-
-```text
-DC image
-G/S green detector
-G/S blue detector
-phasor QC plots
-phasor pseudocolor images
-```
-
----
-
-# 3. Segmentation and phasor filtering
-
-Scripts in:
-
-```text
-src/segmentation/
-```
-
-Main script:
-
-```text
-build_area_phasor_cell_mask.py
-```
-
-This stage combines:
-
-```text
-candidate segmentation masks
-+
-area filtering
-+
-ROI-level phasor analysis
-+
-GMM lifetime classification
-```
-
-to produce the final immune-cell masks.
-
-The final method:
-
-```text
-U-Net / candidate segmentation
-+
-FLIM phasor filtering
-```
-
-is used for downstream biological analysis.
-
-Detailed documentation:
-
-```text
-src/segmentation/README_SEG.md
-```
-
----
-
-# 4. Elastin-based correction
-
-Scripts in:
-
-```text
-src/correction/
-```
-
-This stage is used to:
-
-- normalize phasor shifts across visits
-- compensate for acquisition variability
-- use elastin as a stable tissue reference
-- improve longitudinal consistency
-
----
-
-# 5. Cell-level quantitative analysis
-
-Scripts in:
-
-```text
-src/analysis/
-```
-
-This stage is intended for:
-
-- cell density analysis
-- longitudinal visit comparisons
-- morphology analysis
-- lifetime distributions
-- phenotype association
-- spatial analysis
-- statistical analysis
-- downstream machine learning
-
----
-
-# Segmentation strategy
-
-The segmentation strategy used in this repository is ROI-based rather than purely pixel-based.
-
-The final masks are generated using:
-
-```text
-candidate object detection
-+ area filtering
-+ FLIM phasor/lifetime filtering
-```
-
-Therefore, the most important evaluation metrics are:
-
-```text
-object_precision
-false_positive_percentage
-relative_cell_count_error
-precision
-```
-
-Dice and IoU are included as secondary overlap metrics.
-
----
-
-# Installation
-
-Example environment setup:
+From the repository root:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+PYTHONPATH=src .venv/bin/python \
+  src/calibration_by_blue/calculate_corrected_phasor.py \
+  --data-root /path/to/data_curated \
+  --patients p427 p439 p449
 
-pip install -U pip
+PYTHONPATH=src .venv/bin/python \
+  src/calibration_by_blue/estimate_mosaic_deltas.py \
+  --data-root /path/to/data_curated \
+  --patients p427 p439 p449
 
-pip install -e ".[dev]"
+PYTHONPATH=src .venv/bin/python \
+  src/calibration_by_blue/calibrate_phasors.py \
+  --data-root /path/to/data_curated \
+  --patients p427 p439 p449
 ```
 
----
+The first stage defaults to `DATA_ROOT/corrected_phasor`. The second saves
+tile deltas and mosaic modes under `DATA_ROOT/mosaic_delta_phase`. The third
+reads those modes and writes the definitive products to
+`DATA_ROOT/calibrated_filtered_phasor`.
 
-# Formatting and linting
+## Final products
 
-The repository uses:
+The delta-estimation stage produces:
 
-- black
-- ruff
+- `tile_delta_phase.csv`: delta and diagnostics for every channel/tile;
+- `mosaic_delta_phase.csv`: histogram mode for every mosaic/channel;
+- `run_metadata.json`: all estimation parameters.
 
-Run formatting with:
+The final calibration stage produces:
+
+For every mosaic:
+
+- `*_calibrated_filtered_phasor.tiff`: calibrated and median-filtered, not
+  thresholded;
+- `*_calibrated_filtered_phasor.json`: parameters, applied rotations,
+  provenance, and per-tile diagnostics;
+- `*_phasor_overlay.png`: representative green/blue plot, thresholded only for
+  visualization.
+
+The output root also contains `calibration_manifest.csv`.
+
+See `src/calibration_by_blue/README.md` for the complete array layout and CLI
+options.
+
+## Verification
 
 ```bash
-black src
-ruff check src --fix
-ruff format src
+.venv/bin/ruff check src/calibration_by_blue tests
+
+MPLCONFIGDIR=/tmp/immuno_mpl_cache PYTHONPATH=src .venv/bin/python -c \
+  'import runpy; from pathlib import Path; [[f() for k,f in runpy.run_path(str(p)).items() if k.startswith("test_")] for p in Path("tests").glob("test_*.py")]'
 ```
 
-Check imports and syntax with:
-
-```bash
-python -m compileall src
-```
-
----
-
-# Data organization
-
-The pipeline assumes a directory structure similar to:
-
-```text
-patients/
-└── p449/
-    ├── visit01/
-    │   ├── Mosaic01_.../
-    │   │   ├── flim/
-    │   │   ├── RGB/
-    │   │   ├── phasor/
-    │   │   ├── SegData/
-    │   │   └── ...
-    │   └── ...
-    └── ...
-```
-
----
-
-# Notes
-
-This repository was intentionally separated from exploratory or unrelated code in order to keep the immune-cell FLIM analysis pipeline:
-
-- modular
-- reproducible
-- easier to maintain
-- easier to document
-- easier to scale to larger datasets
-
-The project is still under active development.
+The test suite covers detector-bin correction, DC selection, modality-specific
+offsets, green-only fallback, phase geometry, and a compressed end-to-end TIFF.

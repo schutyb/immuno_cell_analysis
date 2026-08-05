@@ -17,8 +17,10 @@ dependencies = [
   "matplotlib",
   "scikit-image",
   "scikit-learn",
+  "scipy",
   "pillow",
-  "phasorpy",
+  "phasorpy>=0.11",
+  "reportlab>=4.4",
 ]
 
 [project.optional-dependencies]
