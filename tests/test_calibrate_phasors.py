@@ -29,6 +29,10 @@ from calibration_by_blue.flim_io import (
     normalize_single_detector_32_bins,
     split_green_blue,
 )
+from calibration_by_blue.flim_preprocessing import (
+    grid_shape_from_mosaic_name,
+    validate_tile_numbers_for_grid,
+)
 
 
 def test_decay_bin_corrections_are_preserved() -> None:
@@ -42,6 +46,22 @@ def test_decay_bin_corrections_are_preserved() -> None:
     single = normalize_single_detector_32_bins(split)
     assert single.shape == (2, 3, 32)
     assert np.array_equal(single[..., -1], single[..., -2])
+
+
+def test_arbitrary_mosaic_grid_dimensions_are_supported() -> None:
+    assert grid_shape_from_mosaic_name("Mosaic03_2x2_FOV600") == (2, 2)
+    assert grid_shape_from_mosaic_name("Mosaic03_3x4_FOV600") == (3, 4)
+    assert grid_shape_from_mosaic_name("Mosaic03_5x7_FOV600") == (5, 7)
+    assert validate_tile_numbers_for_grid("Mosaic03_2x2_FOV600", {1, 2, 3, 4}) == (2, 2)
+
+
+def test_declared_mosaic_grid_rejects_missing_tiles() -> None:
+    try:
+        validate_tile_numbers_for_grid("Mosaic03_2x2_FOV600", {1, 2, 3})
+    except ValueError as error:
+        assert "declares 2x2=4 tiles but 3 were found" in str(error)
+    else:
+        raise AssertionError("Incomplete 2x2 mosaic was not rejected")
 
 
 def test_brightest_dc_mask_keeps_upper_35_percent() -> None:

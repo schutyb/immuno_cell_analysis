@@ -44,6 +44,7 @@ from calibration_by_blue.flim_preprocessing import (  # noqa: E402
     CorrectionJob,
     corrected_tile_channels,
     discover_jobs,
+    grid_shape_from_mosaic_name,
     sanitize_filename,
     source_maps,
     spatially_resample_channels,
@@ -53,7 +54,7 @@ AXES = "CTZYX"
 COMPONENTS = ("dc_mean", "g", "s")
 OUTPUT_SUFFIX = "_corrected_phasor.tiff"
 DEFAULT_DATA_ROOT = Path("/Users/schutyb/Documents/balu_lab/dod/data_curated")
-DEFAULT_PATIENTS = ("p449", "p439", "p427")
+DEFAULT_PATIENTS = ("p427", "p437", "p439", "p449")
 DEFAULT_DOWNSAMPLE_PIXELS = 200
 MANIFEST_FIELDS = (
     "patient",
@@ -63,6 +64,8 @@ MANIFEST_FIELDS = (
     "channels",
     "number_of_channels",
     "number_of_tiles",
+    "grid_rows",
+    "grid_columns",
     "height",
     "width",
     "shape",
@@ -130,6 +133,7 @@ def write_job(
     minimum_free_gb: float,
 ) -> dict[str, Any]:
     output_tiff, metadata_json = output_paths(job, output_root)
+    grid_shape = grid_shape_from_mosaic_name(job.mosaic)
     output_tiff.parent.mkdir(parents=True, exist_ok=True)
     partial_tiff = output_tiff.with_name(f".{output_tiff.name}.partial")
 
@@ -141,6 +145,8 @@ def write_job(
             "mosaic": job.mosaic,
             "acquisition_type": job.acquisition_type,
             "channels": ";".join(job.channels),
+            "grid_rows": "" if grid_shape is None else grid_shape[0],
+            "grid_columns": "" if grid_shape is None else grid_shape[1],
             "output_tiff": str(output_tiff),
             "metadata_json": str(metadata_json),
             "actual_size_bytes": output_tiff.stat().st_size,
@@ -284,6 +290,12 @@ def write_job(
             "X": "tile column",
         },
         "tile_numbers": tile_numbers,
+        "mosaic_grid_shape": None if grid_shape is None else list(grid_shape),
+        "mosaic_grid_validation": (
+            "not declared in folder name"
+            if grid_shape is None
+            else f"validated {grid_shape[0]}x{grid_shape[1]}"
+        ),
         "dtype": "float32",
         "phasor": {
             "library": "PhasorPy",
@@ -319,6 +331,8 @@ def write_job(
         "channels": ";".join(channels),
         "number_of_channels": len(channels),
         "number_of_tiles": len(tile_numbers),
+        "grid_rows": "" if grid_shape is None else grid_shape[0],
+        "grid_columns": "" if grid_shape is None else grid_shape[1],
         "height": height,
         "width": width,
         "shape": str(output_shape),
@@ -351,7 +365,7 @@ def parse_args() -> argparse.Namespace:
         "--patients",
         nargs="*",
         default=list(DEFAULT_PATIENTS),
-        help="Patient folder names. Default: p449 p439 p427.",
+        help="Patient folder names. Default: p427 p437 p439 p449.",
     )
     parser.add_argument(
         "--output-root",

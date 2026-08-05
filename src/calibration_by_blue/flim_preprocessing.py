@@ -182,22 +182,58 @@ def numbered_tiles(flim_dir: Path) -> dict[int, Path]:
     return result
 
 
+def grid_shape_from_mosaic_name(name: str) -> tuple[int, int] | None:
+    """Return any declared N x M acquisition grid, without fixed-size limits."""
+    match = re.search(r"(?<!\d)(\d+)x(\d+)(?!\d)", name, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    rows, columns = int(match.group(1)), int(match.group(2))
+    if rows < 1 or columns < 1:
+        raise ValueError(f"Invalid mosaic grid in {name!r}: {rows}x{columns}")
+    return rows, columns
+
+
+def validate_tile_numbers_for_grid(
+    mosaic: str,
+    tile_numbers: set[int],
+) -> tuple[int, int] | None:
+    """Validate a contiguous tile sequence and an optional declared N x M grid."""
+    ordered = sorted(tile_numbers)
+    expected_sequence = list(range(1, len(ordered) + 1))
+    if ordered != expected_sequence:
+        raise ValueError(
+            f"Non-contiguous tile sequence for {mosaic}: "
+            f"found={ordered}, expected={expected_sequence}"
+        )
+    grid_shape = grid_shape_from_mosaic_name(mosaic)
+    if grid_shape is not None:
+        rows, columns = grid_shape
+        expected_count = rows * columns
+        if len(ordered) != expected_count:
+            raise ValueError(
+                f"Mosaic {mosaic!r} declares {rows}x{columns}="
+                f"{expected_count} tiles but {len(ordered)} were found: {ordered}"
+            )
+    return grid_shape
+
+
 def source_maps(job: CorrectionJob) -> dict[str, dict[int, Path]]:
     if job.split_flim is not None:
-        return {"split": numbered_tiles(job.split_flim)}
-
-    result: dict[str, dict[int, Path]] = {}
-    if job.green_flim is not None:
-        result["green"] = numbered_tiles(job.green_flim)
-    if job.blue_flim is not None:
-        result["blue"] = numbered_tiles(job.blue_flim)
-    if not result:
-        raise RuntimeError("Correction job has no input channel")
+        result = {"split": numbered_tiles(job.split_flim)}
+    else:
+        result = {}
+        if job.green_flim is not None:
+            result["green"] = numbered_tiles(job.green_flim)
+        if job.blue_flim is not None:
+            result["blue"] = numbered_tiles(job.blue_flim)
+        if not result:
+            raise RuntimeError("Correction job has no input channel")
 
     number_sets = [set(mapping) for mapping in result.values()]
     if any(numbers != number_sets[0] for numbers in number_sets[1:]):
         details = {channel: sorted(mapping) for channel, mapping in result.items()}
         raise ValueError(f"A1/A0 tile-number mismatch: {details}")
+    validate_tile_numbers_for_grid(job.mosaic, number_sets[0])
     return result
 
 

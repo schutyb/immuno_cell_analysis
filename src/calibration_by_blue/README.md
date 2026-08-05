@@ -35,6 +35,11 @@ plots across patients and visits.
 Filtering and DC selection used to estimate calibration never replace the raw
 phasors to which the calibration is applied.
 
+Mosaic dimensions are not fixed. Tiles remain an independent axis, so any
+declared `N×M` layout is supported. When the folder name contains dimensions
+such as `2x2`, `3x4`, or `4x4`, the preprocessing stage verifies that exactly
+`N*M` consecutively numbered tiles exist before reading the decays.
+
 ## Files kept in this package
 
 - `flim_preprocessing.py`: internal discovery, decay correction, splitting,

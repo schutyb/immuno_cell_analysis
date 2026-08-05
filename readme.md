@@ -27,6 +27,10 @@ to document and reproduce the modality-specific offsets.
 9. Create a representative green/blue phasor plot from the saved TIFF. The
    plot retains the brightest 40% of DC for visualization only.
 
+The mosaic grid is dimension-independent. Folder names declaring `N×M` are
+validated against `N*M` consecutive tiles; 2×2, 3×4, 4×4, and other layouts
+are processed through the same tile-axis representation.
+
 ## Project structure
 
 ```text
