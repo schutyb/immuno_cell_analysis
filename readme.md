@@ -13,8 +13,9 @@ to document and reproduce the modality-specific offsets.
 2. Resample every temporal-bin image independently with the established cubic
    downsample/upsample method.
 3. Calculate first-harmonic DC, G, and S from the resampled decays.
-4. For calibration estimation only, apply a 7x7 median filter twice and retain
-   the brightest 35% of finite positive-DC pixels in each tile.
+4. For calibration estimation only, use blue when present; otherwise use green
+   as fallback. Apply a 7x7 median filter twice and retain the brightest 35% of
+   finite positive-DC pixels in each tile.
 5. Estimate the blue rotation for each tile against the 0--3.5 ns segment and
    use the histogram mode of the tile rotations as the mosaic rotation.
 6. Calibrate green using:
@@ -28,8 +29,10 @@ to document and reproduce the modality-specific offsets.
    plot retains the brightest 40% of DC for visualization only.
 
 The mosaic grid is dimension-independent. Folder names declaring `N×M` are
-validated against `N*M` consecutive tiles; 2×2, 3×4, 4×4, and other layouts
-are processed through the same tile-axis representation.
+validated against their tile positions; 2×2, 3×4, 4×4, and other layouts are
+processed through the same tile-axis representation. Deliberate rectangular
+crops are accepted when complete rows or columns were removed and the retained
+TIFFs keep their original tile numbers.
 
 ## Project structure
 
@@ -57,19 +60,31 @@ From the repository root:
 
 ```bash
 PYTHONPATH=src .venv/bin/python \
+  src/calibration_by_blue/run_full_pipeline.py \
+  --data-root /path/to/data_curated \
+  --patients p427 p437 p439 p449 p476 \
+  --overwrite
+```
+
+This single command validates the raw mosaics and runs the three stages in
+order. Omit `--overwrite` when resuming an interrupted run so completed TIFFs
+are reused. The equivalent individual commands are:
+
+```bash
+PYTHONPATH=src .venv/bin/python \
   src/calibration_by_blue/calculate_corrected_phasor.py \
   --data-root /path/to/data_curated \
-  --patients p427 p439 p449
+  --patients p427 p437 p439 p449 p476
 
 PYTHONPATH=src .venv/bin/python \
   src/calibration_by_blue/estimate_mosaic_deltas.py \
   --data-root /path/to/data_curated \
-  --patients p427 p439 p449
+  --patients p427 p437 p439 p449 p476
 
 PYTHONPATH=src .venv/bin/python \
   src/calibration_by_blue/calibrate_phasors.py \
   --data-root /path/to/data_curated \
-  --patients p427 p439 p449
+  --patients p427 p437 p439 p449 p476
 ```
 
 The first stage defaults to `DATA_ROOT/corrected_phasor`. The second saves
@@ -81,8 +96,10 @@ reads those modes and writes the definitive products to
 
 The delta-estimation stage produces:
 
-- `tile_delta_phase.csv`: delta and diagnostics for every channel/tile;
-- `mosaic_delta_phase.csv`: histogram mode for every mosaic/channel;
+- `tile_delta_phase.csv`: delta and diagnostics for blue tiles, or green tiles
+  only when blue is unavailable;
+- `mosaic_delta_phase.csv`: histogram mode for the calibration channel of each
+  mosaic;
 - `run_metadata.json`: all estimation parameters.
 
 The final calibration stage produces:

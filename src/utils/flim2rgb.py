@@ -36,10 +36,14 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import os
 import re
 import traceback
 from pathlib import Path
 from typing import Any
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/immuno_cell_analysis_matplotlib")
+os.environ.setdefault("XDG_CACHE_HOME", "/tmp/immuno_cell_analysis_cache")
 
 import matplotlib
 import numpy as np
@@ -53,9 +57,7 @@ from skimage.registration import phase_cross_correlation
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-DEFAULT_DATA_ROOT = Path(
-    "/Users/schutyb/Documents/balu_lab/dod/data_curated"
-)
+DEFAULT_DATA_ROOT = Path("/Users/schutyb/Documents/balu_lab/dod/data_curated")
 
 FLIM_SUBDIR = "flim"
 RGB_OUTPUT_SUBDIR = "RGB"
@@ -324,22 +326,45 @@ def reconstruct_float_mosaic(
     rows: int,
     cols: int,
 ) -> np.ndarray:
-    expected_numbers = set(range(1, rows * cols + 1))
-    if set(tile_images) != expected_numbers:
-        missing = sorted(expected_numbers.difference(tile_images))
-        extra = sorted(set(tile_images).difference(expected_numbers))
-        raise ValueError(f"Tile mismatch; missing={missing}, extra={extra}")
+    """Assemble a complete grid or a rectangular crop in snake order."""
+    if not tile_images:
+        raise ValueError("Cannot reconstruct an empty mosaic")
+    original_positions = {
+        tile_number: snake_position(tile_number, rows, cols)
+        for tile_number in tile_images
+    }
+    active_rows = sorted({row for row, _ in original_positions.values()})
+    active_columns = sorted({column for _, column in original_positions.values()})
+    expected_positions = {
+        (row, column) for row in active_rows for column in active_columns
+    }
+    if set(original_positions.values()) != expected_positions:
+        raise ValueError(
+            "Available tiles do not form a rectangular mosaic crop: "
+            f"{sorted(tile_images)}"
+        )
+    if active_rows != list(range(active_rows[0], active_rows[-1] + 1)):
+        raise ValueError(f"Mosaic rows are not contiguous: {active_rows}")
+    if active_columns != list(range(active_columns[0], active_columns[-1] + 1)):
+        raise ValueError(f"Mosaic columns are not contiguous: {active_columns}")
+    row_lookup = {value: index for index, value in enumerate(active_rows)}
+    column_lookup = {value: index for index, value in enumerate(active_columns)}
 
-    first = tile_images[1]
+    first = tile_images[min(tile_images)]
     height, width = first.shape
-    mosaic = np.zeros((rows * height, cols * width), dtype=np.float32)
+    mosaic = np.zeros(
+        (len(active_rows) * height, len(active_columns) * width),
+        dtype=np.float32,
+    )
     for tile_number, tile in tile_images.items():
         if tile.shape != (height, width):
             raise ValueError(
                 f"Tile shape mismatch: tile {tile_number}={tile.shape}, "
                 f"expected={(height, width)}"
             )
-        row, col = snake_position(tile_number, rows, cols)
+        original_row, original_col = original_positions[tile_number]
+        row = row_lookup[original_row]
+        col = column_lookup[original_col]
         y0, x0 = row * height, col * width
         mosaic[y0 : y0 + height, x0 : x0 + width] = tile
     return mosaic
@@ -498,11 +523,7 @@ def save_registration_qc(
 ) -> None:
     qc_bin_size = max(
         1,
-        int(
-            np.ceil(
-                max(green_total.shape) / REGISTRATION_QC_MAX_DIMENSION
-            )
-        ),
+        int(np.ceil(max(green_total.shape) / REGISTRATION_QC_MAX_DIMENSION)),
     )
     if qc_bin_size > 1:
         green_total = mean_bin_image(green_total, qc_bin_size)
@@ -541,9 +562,6 @@ def load_sp_raw_mosaics(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[int, tuple[np.ndarray, ...]]]:
     rows, cols = parse_mosaic_shape(mosaic_dir.name)
     _, tile_paths = locate_flim_tiles(mosaic_dir)
-    expected = rows * cols
-    if len(tile_paths) != expected:
-        raise ValueError(f"Expected {expected} Sp tiles, found {len(tile_paths)}")
 
     components: dict[int, tuple[np.ndarray, ...]] = {}
     red_tiles: dict[int, np.ndarray] = {}
@@ -603,6 +621,12 @@ def process_sp_mosaic(mosaic_dir: Path, overwrite: bool) -> dict[str, Any]:
             "G": "sum corrected green bins 5-16",
             "B": "sum corrected blue bins 1-16",
         },
+        "normalization": {
+            "scope": "whole mosaic; never per tile",
+            "method": "independent percentile scaling per RGB component",
+            "percentile_low": PERCENTILE_LOW,
+            "percentile_high": PERCENTILE_HIGH,
+        },
         "percentiles": percentiles,
         "sequential_registration": False,
         "bin_size": 1,
@@ -633,9 +657,6 @@ def load_sequential_raw_mosaics(
             "A1/A0 tile numbers differ: "
             f"A1={sorted(green_paths)}, A0={sorted(blue_paths)}"
         )
-    expected = rows * cols
-    if len(green_paths) != expected:
-        raise ValueError(f"Expected {expected} A1/A0 tiles, found {len(green_paths)}")
 
     red_tiles: dict[int, np.ndarray] = {}
     green_tiles: dict[int, np.ndarray] = {}
@@ -662,9 +683,6 @@ def load_sequential_raw_mosaics(
 def load_a1_raw_mosaic(green_dir: Path) -> tuple[np.ndarray, np.ndarray]:
     rows, cols = parse_mosaic_shape(green_dir.name)
     _, green_paths = locate_flim_tiles(green_dir)
-    expected = rows * cols
-    if len(green_paths) != expected:
-        raise ValueError(f"Expected {expected} A1 tiles, found {len(green_paths)}")
 
     red_tiles: dict[int, np.ndarray] = {}
     green_tiles: dict[int, np.ndarray] = {}
@@ -711,6 +729,12 @@ def process_a1_only_mosaic(
             "R": "sum corrected A1 green bins 1-4",
             "G": "sum corrected A1 green bins 5-32",
             "B": "zero; A0 acquisition unavailable",
+        },
+        "normalization": {
+            "scope": "whole mosaic; never per tile",
+            "method": "independent percentile scaling per RGB component",
+            "percentile_low": PERCENTILE_LOW,
+            "percentile_high": PERCENTILE_HIGH,
         },
         "visualization_only": True,
         "blue_channel_available": False,
@@ -800,6 +824,12 @@ def process_sequential_pair(
             "G": "sum corrected A1 green bins 5-32",
             "B": "sum corrected A0 blue bins 1-32",
         },
+        "normalization": {
+            "scope": "whole mosaic; never per tile",
+            "method": "independent percentile scaling per RGB component",
+            "percentile_low": PERCENTILE_LOW,
+            "percentile_high": PERCENTILE_HIGH,
+        },
         "visualization_only": True,
         "registration_model": "global_translation" if register else "none",
         "binning": "non-overlapping block mean",
@@ -845,8 +875,8 @@ def process_patient(
 
     for visit_dir in visits:
         print(f"  [VISIT] {visit_dir.name}")
-        sp_dirs, sequential_pairs, green_only_dirs, warnings = (
-            classify_visit_mosaics(visit_dir)
+        sp_dirs, sequential_pairs, green_only_dirs, warnings = classify_visit_mosaics(
+            visit_dir
         )
         for warning in warnings:
             print(f"    [WARN] {warning}")
@@ -854,9 +884,7 @@ def process_patient(
         jobs: list[tuple[str, Path, Path | None]] = [
             ("Sp", path, None) for path in sp_dirs
         ]
-        jobs.extend(
-            ("A1_A0", green, blue) for green, blue in sequential_pairs
-        )
+        jobs.extend(("A1_A0", green, blue) for green, blue in sequential_pairs)
         jobs.extend(("A1_only", green, None) for green in green_only_dirs)
 
         for acquisition, first_dir, second_dir in jobs:
@@ -966,9 +994,13 @@ def main() -> None:
             )
         )
 
+    global_manifest = data_root / "rgb_generation_manifest_all_patients.csv"
+    pd.DataFrame(all_rows).to_csv(global_manifest, index=False)
+
     successful = sum(row.get("status") == "ok" for row in all_rows)
     print("\n" + "=" * 78)
     print(f"Finished: {successful}/{len(all_rows)} acquisition(s) successful")
+    print(f"Global manifest: {global_manifest}")
     print("=" * 78)
 
 

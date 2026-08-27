@@ -2,13 +2,14 @@
 """Estimate and persist tile and mosaic delta phases before calibration.
 
 Input TIFFs are the resampled, unfiltered, unthresholded phasors created by
-``calculate_corrected_phasor.py``. For each tile and channel this stage:
+``calculate_corrected_phasor.py``. For each tile in the calibration channel:
 
-1. median-filters DC/G/S with a 7x7 kernel twice;
-2. retains the brightest 35% of finite positive-DC pixels;
-3. estimates the modal phasor coordinate;
-4. calculates its phase-only rotation to the 0--3.5 ns blue segment or the
-   3.5--0.1 ns green segment.
+1. uses blue whenever it exists, otherwise green as the fallback channel;
+2. median-filters DC/G/S with a 7x7 kernel twice;
+3. retains the brightest 35% of finite positive-DC pixels;
+4. estimates the modal phasor coordinate;
+5. calculates its phase-only rotation to the 0--3.5 ns blue segment or the
+   3.5--0.1 ns green fallback segment.
 
 The histogram mode of successful tile rotations becomes the independent
 channel delta for that mosaic. This stage never rotates or writes phasor TIFFs.
@@ -108,7 +109,12 @@ def mosaic_rows(
 ) -> list[dict[str, Any]]:
     records = list(records)
     rows: list[dict[str, Any]] = []
+    attempted_channels = {
+        str(record["channel"]) for record in records if "channel" in record
+    }
     for channel in job.channels:
+        if channel not in attempted_channels:
+            continue
         channel_records = [
             record for record in records if record.get("channel") == channel
         ]
@@ -253,6 +259,7 @@ def main() -> int:
         "stage": "mosaic_delta_phase_estimation_before_self_calibration",
         "source_phasor_root": str(args.phasor_root),
         "patients": list(args.patients),
+        "calibration_channel_strategy": "blue_if_available_else_green",
         "lifetime_ranges_ns": LIFETIME_RANGES_NS,
         "filter_size": args.filter_size,
         "filter_repeat": args.filter_repeat,

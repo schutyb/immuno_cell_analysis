@@ -197,24 +197,60 @@ def validate_tile_numbers_for_grid(
     mosaic: str,
     tile_numbers: set[int],
 ) -> tuple[int, int] | None:
-    """Validate a contiguous tile sequence and an optional declared N x M grid."""
+    """Validate tiles and return their effective ``(rows, columns)`` grid.
+
+    A complete declared grid is accepted as before. A rectangular crop is also
+    valid when complete rows or columns were deliberately removed while the
+    surviving TIFFs retained their original tile numbers. This preserves the
+    acquisition provenance for cases such as tiles 5--16 from a declared 4x4
+    scan, whose effective grid is 3 rows by 4 columns.
+    """
     ordered = sorted(tile_numbers)
-    expected_sequence = list(range(1, len(ordered) + 1))
-    if ordered != expected_sequence:
-        raise ValueError(
-            f"Non-contiguous tile sequence for {mosaic}: "
-            f"found={ordered}, expected={expected_sequence}"
-        )
+    if not ordered:
+        raise ValueError(f"Mosaic {mosaic!r} contains no tiles")
+
     grid_shape = grid_shape_from_mosaic_name(mosaic)
-    if grid_shape is not None:
-        rows, columns = grid_shape
-        expected_count = rows * columns
-        if len(ordered) != expected_count:
+    if grid_shape is None:
+        expected_sequence = list(range(1, len(ordered) + 1))
+        if ordered != expected_sequence:
             raise ValueError(
-                f"Mosaic {mosaic!r} declares {rows}x{columns}="
-                f"{expected_count} tiles but {len(ordered)} were found: {ordered}"
+                f"Non-contiguous tile sequence for {mosaic}: "
+                f"found={ordered}, expected={expected_sequence}"
             )
-    return grid_shape
+        return None
+
+    rows, columns = grid_shape
+    expected_count = rows * columns
+    if ordered[0] < 1 or ordered[-1] > expected_count:
+        raise ValueError(
+            f"Mosaic {mosaic!r} declares {rows}x{columns}={expected_count} tiles "
+            f"but contains out-of-grid numbers: {ordered}"
+        )
+
+    positions = {divmod(tile_number - 1, columns) for tile_number in ordered}
+    active_rows = sorted({row for row, _ in positions})
+    active_columns = sorted({column for _, column in positions})
+    rectangular_positions = {
+        (row, column) for row in active_rows for column in active_columns
+    }
+    rows_are_contiguous = active_rows == list(
+        range(active_rows[0], active_rows[-1] + 1)
+    )
+    columns_are_contiguous = active_columns == list(
+        range(active_columns[0], active_columns[-1] + 1)
+    )
+    if (
+        positions != rectangular_positions
+        or not rows_are_contiguous
+        or not columns_are_contiguous
+    ):
+        raise ValueError(
+            f"Mosaic {mosaic!r} declares {rows}x{columns}={expected_count} tiles "
+            f"but {len(ordered)} were found and they do not form a rectangular "
+            f"crop: {ordered}"
+        )
+
+    return len(active_rows), len(active_columns)
 
 
 def source_maps(job: CorrectionJob) -> dict[str, dict[int, Path]]:

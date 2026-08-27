@@ -48,13 +48,14 @@ from calibration_by_blue.flim_preprocessing import (  # noqa: E402
     sanitize_filename,
     source_maps,
     spatially_resample_channels,
+    validate_tile_numbers_for_grid,
 )
 
 AXES = "CTZYX"
 COMPONENTS = ("dc_mean", "g", "s")
 OUTPUT_SUFFIX = "_corrected_phasor.tiff"
 DEFAULT_DATA_ROOT = Path("/Users/schutyb/Documents/balu_lab/dod/data_curated")
-DEFAULT_PATIENTS = ("p427", "p437", "p439", "p449")
+DEFAULT_PATIENTS = ("p427", "p437", "p439", "p449", "p476")
 DEFAULT_DOWNSAMPLE_PIXELS = 200
 MANIFEST_FIELDS = (
     "patient",
@@ -133,7 +134,10 @@ def write_job(
     minimum_free_gb: float,
 ) -> dict[str, Any]:
     output_tiff, metadata_json = output_paths(job, output_root)
-    grid_shape = grid_shape_from_mosaic_name(job.mosaic)
+    declared_grid_shape = grid_shape_from_mosaic_name(job.mosaic)
+    maps = source_maps(job)
+    tile_numbers = sorted(next(iter(maps.values())))
+    grid_shape = validate_tile_numbers_for_grid(job.mosaic, set(tile_numbers))
     output_tiff.parent.mkdir(parents=True, exist_ok=True)
     partial_tiff = output_tiff.with_name(f".{output_tiff.name}.partial")
 
@@ -154,8 +158,6 @@ def write_job(
             "error": "",
         }
 
-    maps = source_maps(job)
-    tile_numbers = sorted(next(iter(maps.values())))
     first_corrected, first_paths, first_original_bins = corrected_tile_channels(
         job,
         maps,
@@ -290,11 +292,22 @@ def write_job(
             "X": "tile column",
         },
         "tile_numbers": tile_numbers,
+        "mosaic_declared_grid_shape": (
+            None if declared_grid_shape is None else list(declared_grid_shape)
+        ),
         "mosaic_grid_shape": None if grid_shape is None else list(grid_shape),
         "mosaic_grid_validation": (
             "not declared in folder name"
-            if grid_shape is None
-            else f"validated {grid_shape[0]}x{grid_shape[1]}"
+            if declared_grid_shape is None
+            else (
+                f"validated {grid_shape[0]}x{grid_shape[1]}"
+                if grid_shape == declared_grid_shape
+                else (
+                    f"validated rectangular crop {grid_shape[0]}x{grid_shape[1]} "
+                    f"within declared {declared_grid_shape[0]}x"
+                    f"{declared_grid_shape[1]}; original tile numbers retained"
+                )
+            )
         ),
         "dtype": "float32",
         "phasor": {
@@ -365,7 +378,7 @@ def parse_args() -> argparse.Namespace:
         "--patients",
         nargs="*",
         default=list(DEFAULT_PATIENTS),
-        help="Patient folder names. Default: p427 p437 p439 p449.",
+        help="Patient folder names. Default: p427 p437 p439 p449 p476.",
     )
     parser.add_argument(
         "--output-root",

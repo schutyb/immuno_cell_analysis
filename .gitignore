@@ -51,6 +51,7 @@ outputs/
 # ----------------------------
 tmp/
 temp/
+aux/median_filter_comparison_results/
 
 # ----------------------------
 # Large TIFF / PNG outputs

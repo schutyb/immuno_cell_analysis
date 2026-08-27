@@ -55,11 +55,18 @@ def test_arbitrary_mosaic_grid_dimensions_are_supported() -> None:
     assert validate_tile_numbers_for_grid("Mosaic03_2x2_FOV600", {1, 2, 3, 4}) == (2, 2)
 
 
-def test_declared_mosaic_grid_rejects_missing_tiles() -> None:
+def test_declared_mosaic_grid_accepts_complete_row_crop() -> None:
+    assert validate_tile_numbers_for_grid("Mosaic10_4x4_FOV600", set(range(5, 17))) == (
+        3,
+        4,
+    )
+
+
+def test_declared_mosaic_grid_rejects_nonrectangular_missing_tiles() -> None:
     try:
         validate_tile_numbers_for_grid("Mosaic03_2x2_FOV600", {1, 2, 3})
     except ValueError as error:
-        assert "declares 2x2=4 tiles but 3 were found" in str(error)
+        assert "do not form a rectangular crop" in str(error)
     else:
         raise AssertionError("Incomplete 2x2 mosaic was not rejected")
 
@@ -182,6 +189,8 @@ def test_small_end_to_end_tiff_is_filtered_but_not_thresholded() -> None:
         source = tifffile.memmap(source_path, mode="r", squeeze=False)
         modes, tile_records = estimate_modes(source, job, args)
         del source
+        assert set(modes) == {"blue"}
+        assert {record["channel"] for record in tile_records} == {"blue"}
         delta_csv = root / "mosaic_delta_phase.csv"
         write_csv(
             delta_csv,
@@ -201,6 +210,7 @@ def test_small_end_to_end_tiff_is_filtered_but_not_thresholded() -> None:
         assert row["status"] == "ok"
         final = tifffile.imread(row["output_tiff"], squeeze=False)
         assert final.shape == shape
+        assert final.dtype == np.dtype(np.float32)
         assert np.all(np.isfinite(final))
         assert np.all(final[:, :, 0] > 0)
         assert Path(row["metadata_json"]).is_file()

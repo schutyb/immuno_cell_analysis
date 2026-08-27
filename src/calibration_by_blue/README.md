@@ -14,9 +14,10 @@ plots across patients and visits.
 1. Correct/split each raw FLIM decay and resample every temporal-bin image
    independently with the established cubic downsample/upsample method.
 2. Calculate first-harmonic DC, G, and S from the resampled decay.
-3. For calibration estimation only, median-filter each tile with a 7x7 kernel
-   twice and retain the brightest 35% of finite positive-DC pixels (the
-   threshold is the 65th percentile).
+3. For calibration estimation only, use blue when present; otherwise use green
+   as fallback. Median-filter that channel in each tile with a 7x7 kernel twice
+   and retain the brightest 35% of finite positive-DC pixels (the threshold is
+   the 65th percentile).
 4. Estimate one modal phasor per tile and its phase rotation. Use the histogram
    mode of the successful blue tile rotations as the mosaic rotation, against
    the 0--3.5 ns blue segment.
@@ -37,8 +38,9 @@ phasors to which the calibration is applied.
 
 Mosaic dimensions are not fixed. Tiles remain an independent axis, so any
 declared `N×M` layout is supported. When the folder name contains dimensions
-such as `2x2`, `3x4`, or `4x4`, the preprocessing stage verifies that exactly
-`N*M` consecutively numbered tiles exist before reading the decays.
+such as `2x2`, `3x4`, or `4x4`, the preprocessing stage validates the retained
+tile positions. Rectangular crops made by removing complete rows or columns are
+accepted without renumbering the surviving source TIFFs.
 
 ## Files kept in this package
 
@@ -48,7 +50,7 @@ such as `2x2`, `3x4`, or `4x4`, the preprocessing stage verifies that exactly
 - `calculate_corrected_phasor.py`: creates compact, unfiltered and
   unthresholded resampled phasor TIFFs.
 - `estimate_mosaic_deltas.py`: filters/thresholds only for estimation, writes
-  every tile delta and the histogram mode for each mosaic/channel.
+  every calibration-tile delta and the histogram mode for each mosaic.
 - `calibrate_phasors.py`: reads the saved mosaic modes, applies calibration to
   the original phasors, and writes the final TIFF, JSON provenance, CSV
   manifest, and two-channel plot.
@@ -59,19 +61,40 @@ From the repository root:
 
 ```bash
 PYTHONPATH=src .venv/bin/python \
+  src/calibration_by_blue/run_full_pipeline.py \
+  --data-root /path/to/data_curated \
+  --patients p427 p437 p439 p449 p476 \
+  --overwrite
+```
+
+Omit `--overwrite` to resume an interrupted execution and reuse completed
+intermediate and final TIFFs. The equivalent three commands are:
+
+For mosaics added after the main run, process only exact selections while
+preserving all existing TIFFs, delta CSV rows, and manifests:
+
+```bash
+PYTHONPATH=src .venv/bin/python \
+  src/calibration_by_blue/process_selected_mosaics.py \
+  p476/visit04/Mosaic02_4x4_FOV600_z080_32Sp \
+  p476/visit04/Mosaic04_4x4_FOV600_z130_32Sp
+```
+
+```bash
+PYTHONPATH=src .venv/bin/python \
   src/calibration_by_blue/calculate_corrected_phasor.py \
   --data-root /path/to/data_curated \
-  --patients p427 p439 p449
+  --patients p427 p437 p439 p449 p476
 
 PYTHONPATH=src .venv/bin/python \
   src/calibration_by_blue/estimate_mosaic_deltas.py \
   --data-root /path/to/data_curated \
-  --patients p427 p439 p449
+  --patients p427 p437 p439 p449 p476
 
 PYTHONPATH=src .venv/bin/python \
   src/calibration_by_blue/calibrate_phasors.py \
   --data-root /path/to/data_curated \
-  --patients p427 p439 p449
+  --patients p427 p437 p439 p449 p476
 ```
 
 The commands use, in order, `DATA_ROOT/corrected_phasor`,
@@ -97,6 +120,7 @@ to the final calibration. Production values are defaults and are recorded.
 The intermediate and final TIFFs use axes `(channel, tile, component, y, x)`.
 Channel order is green then blue when both exist; component order is
 `dc_mean, g, s`. Tiles remain independent and are never spatially concatenated.
+The final files are losslessly compressed BigTIFFs with IEEE `float32` samples.
 
 Each final mosaic produces:
 

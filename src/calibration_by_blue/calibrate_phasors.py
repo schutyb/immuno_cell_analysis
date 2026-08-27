@@ -53,7 +53,7 @@ LIFETIME_RANGES_NS = {
 GREEN_OFFSET_DEG = {"Sp": 2.1, "A1_A0": 1.55}
 
 DEFAULT_DATA_ROOT = Path("/Users/schutyb/Documents/balu_lab/dod/data_curated")
-DEFAULT_PATIENTS = ("p427", "p437", "p439", "p449")
+DEFAULT_PATIENTS = ("p427", "p437", "p439", "p449", "p476")
 DEFAULT_FILTER_SIZE = 7
 DEFAULT_FILTER_REPEAT = 2
 DEFAULT_CALIBRATION_TOP_DC_PERCENT = 35.0
@@ -381,9 +381,13 @@ def estimate_modes(
     job: PhasorJob,
     args: argparse.Namespace,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
+    # Blue defines the mosaic calibration whenever it is available. An own
+    # green mode is estimated only for the no-blue fallback case.
+    calibration_channels = ("blue",) if "blue" in job.channels else ("green",)
     modes: dict[str, float] = {}
     records: list[dict[str, Any]] = []
-    for channel_index, channel in enumerate(job.channels):
+    for channel in calibration_channels:
+        channel_index = job.channels.index(channel)
         successful: list[float] = []
         for tile_index, tile_number in enumerate(job.tile_numbers):
             record: dict[str, Any] = {
@@ -718,6 +722,10 @@ def process_job(
             "methods": methods,
         },
         "final_tiff": {
+            "dtype": "float32",
+            "container": "BigTIFF",
+            "compression": args.compression,
+            "compression_lossless": True,
             "rotation_input": "original unfiltered and unthresholded G/S",
             "operation_order": "rotate G/S, then median-filter DC/G/S",
             "median_filter": {
